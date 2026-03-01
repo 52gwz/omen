@@ -1,90 +1,149 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+
+  color-scheme: light;
+
+  /* --- Light theme (default) --- */
+  --c-base: #eff1f5;
+  --c-mantle: #e6e9ef;
+  --c-surface0: #dce0e8;
+  --c-surface1: #bcc0cc;
+  --c-surface2: #acb0be;
+  --c-surface-alt: #e6e9ef;
+  --c-surface-hover: #ccd0da;
+
+  --c-text: #4c4f69;
+  --c-subtext0: #6c6f85;
+  --c-subtext1: #5c5f77;
+  --c-overlay0: #9ca0b0;
+  --c-overlay1: #8c8fa1;
+
+  --c-blue: #1e66f5;
+  --c-green: #40a02b;
+  --c-red: #d20f39;
+  --c-yellow: #df8e1d;
+  --c-peach: #fe640b;
+  --c-code-inline: #d20f39;
+
+  --c-user-bubble-bg: #1e66f5;
+  --c-user-bubble-text: #ffffff;
+  --c-send-btn-bg: #1e66f5;
+  --c-send-btn-text: #ffffff;
+  --c-error-bar-bg: #d20f39;
+  --c-error-bar-text: #ffffff;
+  --c-confirm-btn-bg: #40a02b;
+  --c-confirm-btn-text: #ffffff;
+
+  --c-badge-pending-bg: rgba(223, 142, 29, 0.12);
+  --c-badge-pending-text: #df8e1d;
+  --c-badge-running-bg: rgba(30, 102, 245, 0.12);
+  --c-badge-running-text: #1e66f5;
+  --c-badge-completed-bg: rgba(64, 160, 43, 0.12);
+  --c-badge-completed-text: #40a02b;
+  --c-badge-error-bg: rgba(210, 15, 57, 0.12);
+  --c-badge-error-text: #d20f39;
+
+  --c-drag-overlay: rgba(30, 102, 245, 0.06);
+  --c-shadow: rgba(0, 0, 0, 0.1);
+  --c-shadow-heavy: rgba(0, 0, 0, 0.18);
+  --c-overlay-bg: rgba(0, 0, 0, 0.25);
+
+  --c-scrollbar: #bcc0cc;
+  --c-scrollbar-hover: #9ca0b0;
+
+  color: var(--c-text);
+  background-color: var(--c-base);
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --c-base: #1e1e2e;
+  --c-mantle: #181825;
+  --c-surface0: #313244;
+  --c-surface1: #45475a;
+  --c-surface2: #585b70;
+  --c-surface-alt: #2a2a3c;
+  --c-surface-hover: #3b3b52;
+
+  --c-text: #cdd6f4;
+  --c-subtext0: #a6adc8;
+  --c-subtext1: #bac2de;
+  --c-overlay0: #6c7086;
+  --c-overlay1: #7f849c;
+
+  --c-blue: #89b4fa;
+  --c-green: #a6e3a1;
+  --c-red: #f38ba8;
+  --c-yellow: #f9e2af;
+  --c-peach: #fab387;
+  --c-code-inline: #f38ba8;
+
+  --c-user-bubble-bg: #89b4fa;
+  --c-user-bubble-text: #1e1e2e;
+  --c-send-btn-bg: #89b4fa;
+  --c-send-btn-text: #1e1e2e;
+  --c-error-bar-bg: #f38ba8;
+  --c-error-bar-text: #1e1e2e;
+  --c-confirm-btn-bg: #a6e3a1;
+  --c-confirm-btn-text: #1e1e2e;
+
+  --c-badge-pending-bg: rgba(249, 226, 175, 0.15);
+  --c-badge-pending-text: #f9e2af;
+  --c-badge-running-bg: rgba(137, 180, 250, 0.15);
+  --c-badge-running-text: #89b4fa;
+  --c-badge-completed-bg: rgba(166, 227, 161, 0.15);
+  --c-badge-completed-text: #a6e3a1;
+  --c-badge-error-bg: rgba(243, 139, 168, 0.15);
+  --c-badge-error-text: #f38ba8;
+
+  --c-drag-overlay: rgba(137, 180, 250, 0.08);
+  --c-shadow: rgba(0, 0, 0, 0.4);
+  --c-shadow-heavy: rgba(0, 0, 0, 0.5);
+  --c-overlay-bg: rgba(0, 0, 0, 0.5);
+
+  --c-scrollbar: #45475a;
+  --c-scrollbar-hover: #585b70;
 }
 
 body {
   margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
-
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
-
-code {
-  background-color: #1a1a1a;
-  padding: 2px 4px;
-  margin: 0 4px;
-  border-radius: 4px;
-}
-
-.card {
-  padding: 2em;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
 }
 
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-  code {
-    background-color: #f9f9f9;
-  }
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-scrollbar);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-scrollbar-hover);
 }

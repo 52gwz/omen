@@ -34,5 +34,11 @@
     "vite-plugin-electron-renderer": "^0.14.5",
     "vue": "^3.4.21",
     "vue-tsc": "^2.0.6"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.37",
+    "ai": "^6.0.105",
+    "electron-store": "^11.0.2",
+    "marked": "^17.0.3"
   }
 }

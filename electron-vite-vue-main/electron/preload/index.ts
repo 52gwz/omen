@@ -18,9 +18,142 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
     const [channel, ...omit] = args
     return ipcRenderer.invoke(channel, ...omit)
   },
+})
 
-  // You can expose other APTs you need here.
-  // ...
+// --------- AI Chat API ---------
+contextBridge.exposeInMainWorld('aiChat', {
+  getConfig() {
+    return ipcRenderer.invoke('ai:get-config')
+  },
+  saveConfig(config: { apiKey: string; baseURL: string; defaultModel: string }) {
+    return ipcRenderer.invoke('ai:save-config', config)
+  },
+  getModels(): Promise<string[]> {
+    return ipcRenderer.invoke('ai:models')
+  },
+  sendMessage(payload: { model: string; messages: { role: string; content: string }[] }): Promise<string> {
+    return ipcRenderer.invoke('ai:chat', payload)
+  },
+  startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }) {
+    ipcRenderer.send('ai:chat-stream', payload)
+  },
+  onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void) {
+    const handler = (_: any, data: { requestId: string; delta: string }) => callback(data)
+    ipcRenderer.on('ai:chat-stream-reasoning', handler)
+    return () => { ipcRenderer.off('ai:chat-stream-reasoning', handler) }
+  },
+  onStreamChunk(callback: (data: { requestId: string; delta: string }) => void) {
+    const handler = (_: any, data: { requestId: string; delta: string }) => callback(data)
+    ipcRenderer.on('ai:chat-stream-chunk', handler)
+    return () => { ipcRenderer.off('ai:chat-stream-chunk', handler) }
+  },
+  onStreamDone(callback: (data: { requestId: string; chunkCount: number }) => void) {
+    const handler = (_: any, data: { requestId: string; chunkCount: number }) => callback(data)
+    ipcRenderer.on('ai:chat-stream-done', handler)
+    return () => { ipcRenderer.off('ai:chat-stream-done', handler) }
+  },
+  onStreamError(callback: (data: { requestId: string; message: string }) => void) {
+    const handler = (_: any, data: { requestId: string; message: string }) => callback(data)
+    ipcRenderer.on('ai:chat-stream-error', handler)
+    return () => { ipcRenderer.off('ai:chat-stream-error', handler) }
+  },
+})
+
+// --------- Agent API ---------
+contextBridge.exposeInMainWorld('agentChat', {
+  start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }) {
+    ipcRenderer.send('agent:start', payload)
+  },
+  confirmTool(requestId: string, toolCallId: string) {
+    ipcRenderer.send('agent:tool-confirm', { requestId, toolCallId })
+  },
+  rejectTool(requestId: string, toolCallId: string) {
+    ipcRenderer.send('agent:tool-reject', { requestId, toolCallId })
+  },
+  onStreamChunk(callback: (data: { requestId: string; delta: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:stream-chunk', handler)
+    return () => { ipcRenderer.off('agent:stream-chunk', handler) }
+  },
+  onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:stream-reasoning', handler)
+    return () => { ipcRenderer.off('agent:stream-reasoning', handler) }
+  },
+  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:tool-pending', handler)
+    return () => { ipcRenderer.off('agent:tool-pending', handler) }
+  },
+  onToolRunning(callback: (data: { requestId: string; toolCallId: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:tool-running', handler)
+    return () => { ipcRenderer.off('agent:tool-running', handler) }
+  },
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:tool-result', handler)
+    return () => { ipcRenderer.off('agent:tool-result', handler) }
+  },
+  onNewTurn(callback: (data: { requestId: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:new-turn', handler)
+    return () => { ipcRenderer.off('agent:new-turn', handler) }
+  },
+  onDone(callback: (data: { requestId: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:done', handler)
+    return () => { ipcRenderer.off('agent:done', handler) }
+  },
+  onError(callback: (data: { requestId: string; message: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:error', handler)
+    return () => { ipcRenderer.off('agent:error', handler) }
+  },
+})
+
+// --------- Dialog API ---------
+contextBridge.exposeInMainWorld('dialogApi', {
+  selectDirectory(): Promise<string | null> {
+    return ipcRenderer.invoke('dialog:select-directory')
+  },
+})
+
+// --------- Project & Conversation API ---------
+contextBridge.exposeInMainWorld('projectApi', {
+  list(): Promise<{ id: string; path: string; name: string }[]> {
+    return ipcRenderer.invoke('project:list')
+  },
+  add(folderPath: string): Promise<{ id: string; path: string; name: string } | null> {
+    return ipcRenderer.invoke('project:add', folderPath)
+  },
+  remove(projectId: string): Promise<void> {
+    return ipcRenderer.invoke('project:remove', projectId)
+  },
+  checkPath(folderPath: string): Promise<boolean> {
+    return ipcRenderer.invoke('project:check-path', folderPath)
+  },
+})
+
+contextBridge.exposeInMainWorld('conversationApi', {
+  list(projectId: string): Promise<{ id: string; projectId: string; title: string; createdAt: number }[]> {
+    return ipcRenderer.invoke('conversation:list', projectId)
+  },
+  create(projectId: string, title: string): Promise<{ id: string; projectId: string; title: string; createdAt: number }> {
+    return ipcRenderer.invoke('conversation:create', projectId, title)
+  },
+  delete(convId: string): Promise<void> {
+    return ipcRenderer.invoke('conversation:delete', convId)
+  },
+  rename(convId: string, title: string): Promise<void> {
+    return ipcRenderer.invoke('conversation:rename', convId, title)
+  },
+  getMessages(convId: string): Promise<{ role: string; content: string }[]> {
+    return ipcRenderer.invoke('conversation:get-messages', convId)
+  },
+  saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void> {
+    return ipcRenderer.invoke('conversation:save-messages', convId, messages)
+  },
 })
 
 // --------- Preload scripts loading ---------

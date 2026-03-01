@@ -6,7 +6,76 @@ declare module '*.vue' {
   export default component
 }
 
+interface AiChatConfig {
+  apiKey: string
+  baseURL: string
+  defaultModel: string
+}
+
+interface AiChatApi {
+  getConfig(): Promise<AiChatConfig>
+  saveConfig(config: AiChatConfig): Promise<void>
+  getModels(): Promise<string[]>
+  sendMessage(payload: { model: string; messages: { role: string; content: string }[] }): Promise<string>
+  startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }): void
+  onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
+  onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
+  onStreamDone(callback: (data: { requestId: string; chunkCount: number }) => void): () => void
+  onStreamError(callback: (data: { requestId: string; message: string }) => void): () => void
+}
+
+interface AgentChatApi {
+  start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }): void
+  confirmTool(requestId: string, toolCallId: string): void
+  rejectTool(requestId: string, toolCallId: string): void
+  onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
+  onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
+  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string }) => void): () => void
+  onToolRunning(callback: (data: { requestId: string; toolCallId: string }) => void): () => void
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void): () => void
+  onNewTurn(callback: (data: { requestId: string }) => void): () => void
+  onDone(callback: (data: { requestId: string }) => void): () => void
+  onError(callback: (data: { requestId: string; message: string }) => void): () => void
+}
+
+interface DialogApi {
+  selectDirectory(): Promise<string | null>
+}
+
+interface ProjectData {
+  id: string
+  path: string
+  name: string
+}
+
+interface ConversationMeta {
+  id: string
+  projectId: string
+  title: string
+  createdAt: number
+}
+
+interface ProjectApi {
+  list(): Promise<ProjectData[]>
+  add(folderPath: string): Promise<ProjectData | null>
+  remove(projectId: string): Promise<void>
+  checkPath(folderPath: string): Promise<boolean>
+}
+
+interface ConversationApi {
+  list(projectId: string): Promise<ConversationMeta[]>
+  create(projectId: string, title: string): Promise<ConversationMeta>
+  delete(convId: string): Promise<void>
+  rename(convId: string, title: string): Promise<void>
+  getMessages(convId: string): Promise<{ role: string; content: string }[]>
+  saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void>
+}
+
 interface Window {
-  // expose in the `electron/preload/index.ts`
   ipcRenderer: import('electron').IpcRenderer
+  aiChat: AiChatApi
+  agentChat: AgentChatApi
+  dialogApi: DialogApi
+  projectApi: ProjectApi
+  conversationApi: ConversationApi
 }
