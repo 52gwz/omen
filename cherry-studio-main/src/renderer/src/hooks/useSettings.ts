@@ -1,0 +1,169 @@
+/**
+ * @deprecated Scheduled for removal in v2.0.0
+ * --------------------------------------------------------------------------
+ * ⚠️ NOTICE: V2 DATA&UI REFACTORING (by 0xfullex)
+ * --------------------------------------------------------------------------
+ * STOP: Feature PRs affecting this file are currently BLOCKED.
+ * Only critical bug fixes are accepted during this migration phase.
+ *
+ * This file is being refactored to v2 standards.
+ * Any non-critical changes will conflict with the ongoing work.
+ *
+ * 🔗 Context & Status:
+ * - Contribution Hold: https://github.com/CherryHQ/cherry-studio/issues/10954
+ * - v2 Refactor PR   : https://github.com/CherryHQ/cherry-studio/pull/10162
+ * --------------------------------------------------------------------------
+ */
+import store, { useAppDispatch, useAppSelector } from '@renderer/store'
+import type { AssistantIconType, SendMessageShortcut, SettingsState } from '@renderer/store/settings'
+import {
+  setAssistantIconType,
+  setAutoCheckUpdate as _setAutoCheckUpdate,
+  setDisableHardwareAcceleration,
+  setEnableDeveloperMode,
+  setLaunchOnBoot,
+  setLaunchToTray,
+  setNavbarPosition,
+  setPinTopicsToTop,
+  setSendMessageShortcut as _setSendMessageShortcut,
+  setSidebarIcons,
+  setTargetLanguage,
+  setTestChannel as _setTestChannel,
+  setTestPlan as _setTestPlan,
+  setTheme,
+  setTopicPosition,
+  setTray as _setTray,
+  setTrayOnClose,
+  setUseSystemTitleBar as _setUseSystemTitleBar,
+  setWindowStyle
+} from '@renderer/store/settings'
+import type { SidebarIcon, ThemeMode, TranslateLanguageCode } from '@renderer/types'
+import type { UpgradeChannel } from '@shared/config/constant'
+
+export function useSettings() {
+  const settings = useAppSelector((state) => state.settings)
+  const dispatch = useAppDispatch()
+
+  return {
+    ...settings,
+    setSendMessageShortcut(shortcut: SendMessageShortcut) {
+      dispatch(_setSendMessageShortcut(shortcut))
+    },
+
+    setLaunch(isLaunchOnBoot: boolean | undefined, isLaunchToTray: boolean | undefined = undefined) {
+      if (isLaunchOnBoot !== undefined) {
+        dispatch(setLaunchOnBoot(isLaunchOnBoot))
+        window.api.setLaunchOnBoot(isLaunchOnBoot)
+      }
+
+      if (isLaunchToTray !== undefined) {
+        dispatch(setLaunchToTray(isLaunchToTray))
+        window.api.setLaunchToTray(isLaunchToTray)
+      }
+    },
+
+    setTray(isShowTray: boolean | undefined, isTrayOnClose: boolean | undefined = undefined) {
+      if (isShowTray !== undefined) {
+        dispatch(_setTray(isShowTray))
+        window.api.setTray(isShowTray)
+      }
+      if (isTrayOnClose !== undefined) {
+        dispatch(setTrayOnClose(isTrayOnClose))
+        window.api.setTrayOnClose(isTrayOnClose)
+      }
+    },
+
+    setAutoCheckUpdate(isAutoUpdate: boolean) {
+      dispatch(_setAutoCheckUpdate(isAutoUpdate))
+      window.api.setAutoUpdate(isAutoUpdate)
+    },
+
+    setTestPlan(isTestPlan: boolean) {
+      dispatch(_setTestPlan(isTestPlan))
+      window.api.setTestPlan(isTestPlan)
+    },
+
+    setTestChannel(channel: UpgradeChannel) {
+      dispatch(_setTestChannel(channel))
+      window.api.setTestChannel(channel)
+    },
+
+    setTheme(theme: ThemeMode) {
+      dispatch(setTheme(theme))
+    },
+    setWindowStyle(windowStyle: 'transparent' | 'opaque') {
+      dispatch(setWindowStyle(windowStyle))
+    },
+    setTargetLanguage(targetLanguage: TranslateLanguageCode) {
+      dispatch(setTargetLanguage(targetLanguage))
+    },
+    setTopicPosition(topicPosition: 'left' | 'right') {
+      dispatch(setTopicPosition(topicPosition))
+    },
+    setPinTopicsToTop(pinTopicsToTop: boolean) {
+      dispatch(setPinTopicsToTop(pinTopicsToTop))
+    },
+    updateSidebarIcons(icons: { visible: SidebarIcon[]; disabled: SidebarIcon[] }) {
+      dispatch(setSidebarIcons(icons))
+    },
+    updateSidebarVisibleIcons(icons: SidebarIcon[]) {
+      dispatch(setSidebarIcons({ visible: icons }))
+    },
+    updateSidebarDisabledIcons(icons: SidebarIcon[]) {
+      dispatch(setSidebarIcons({ disabled: icons }))
+    },
+    setAssistantIconType(assistantIconType: AssistantIconType) {
+      dispatch(setAssistantIconType(assistantIconType))
+    },
+    setDisableHardwareAcceleration(disableHardwareAcceleration: boolean) {
+      dispatch(setDisableHardwareAcceleration(disableHardwareAcceleration))
+      window.api.setDisableHardwareAcceleration(disableHardwareAcceleration)
+    },
+    setUseSystemTitleBar(useSystemTitleBar: boolean) {
+      dispatch(_setUseSystemTitleBar(useSystemTitleBar))
+      window.api.setUseSystemTitleBar(useSystemTitleBar)
+    }
+  }
+}
+
+export function useMessageStyle() {
+  const { messageStyle } = useSettings()
+  const isBubbleStyle = messageStyle === 'bubble'
+
+  return {
+    isBubbleStyle
+  }
+}
+
+export const getStoreSetting = <K extends keyof SettingsState>(key: K): SettingsState[K] => {
+  return store.getState().settings[key]
+}
+
+export const useEnableDeveloperMode = () => {
+  const enableDeveloperMode = useAppSelector((state) => state.settings.enableDeveloperMode)
+  const dispatch = useAppDispatch()
+
+  return {
+    enableDeveloperMode,
+    setEnableDeveloperMode: (enableDeveloperMode: boolean) => {
+      dispatch(setEnableDeveloperMode(enableDeveloperMode))
+      window.api.config.set('enableDeveloperMode', enableDeveloperMode)
+    }
+  }
+}
+
+export const getEnableDeveloperMode = () => {
+  return store.getState().settings.enableDeveloperMode
+}
+
+export const useNavbarPosition = () => {
+  const navbarPosition = useAppSelector((state) => state.settings.navbarPosition)
+  const dispatch = useAppDispatch()
+
+  return {
+    navbarPosition,
+    isLeftNavbar: navbarPosition === 'left',
+    isTopNavbar: navbarPosition === 'top',
+    setNavbarPosition: (position: 'left' | 'top') => dispatch(setNavbarPosition(position))
+  }
+}

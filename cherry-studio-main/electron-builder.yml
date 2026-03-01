@@ -1,0 +1,176 @@
+appId: com.kangfenmao.CherryStudio
+productName: Cherry Studio
+electronLanguages:
+  - zh-CN
+  - zh-TW
+  - en-US
+  - ja # macOS/linux/win
+  - ru # macOS/linux/win
+  - zh_CN # for macOS
+  - zh_TW # for macOS
+  - en # for macOS
+  - de
+directories:
+  buildResources: build
+
+protocols:
+  - name: Cherry Studio
+    schemes:
+      - cherrystudio
+files:
+  - "**/*"
+  - "!**/{.vscode,.yarn,.yarn-lock,.github,.cursorrules,.prettierrc}"
+  - "!electron.vite.config.{js,ts,mjs,cjs}}"
+  - "!.*"
+  - "!components.json"
+  - "!**/{.eslintignore,.eslintrc.js,.eslintrc.json,.eslintcache,root.eslint.config.js,eslint.config.js,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,eslint.config.mjs,dev-app-update.yml,CHANGELOG.md,README.md,biome.jsonc}"
+  - "!**/{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+  - "!**/{tsconfig.json,tsconfig.tsbuildinfo,tsconfig.node.json,tsconfig.web.json}"
+  - "!**/{.editorconfig,.jekyll-metadata}"
+  - "!src"
+  - "!config"
+  - "!patches"
+  - "!app-upgrade-config.json"
+  - "!**/node_modules/**/*.cpp"
+  - "!**/node_modules/node-addon-api/**"
+  - "!**/node_modules/prebuild-install/**"
+  - "!scripts"
+  - "!local"
+  - "!docs"
+  - "!packages"
+  - "!.swc"
+  - "!.bin"
+  - "!._*"
+  - "!*.log"
+  - "!stats.html"
+  - "!*.md"
+  - "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}"
+  - "!**/*.{map,ts,tsx,jsx,less,scss,sass,css.d.ts,d.cts,d.mts,md,markdown,yaml,yml}"
+  - "!**/{test,tests,__tests__,powered-test,coverage}/**"
+  - "!**/{example,examples}/**"
+  - "!**/*.{spec,test}.{js,jsx,ts,tsx}"
+  - "!**/*.min.*.map"
+  - "!**/*.d.ts"
+  - "!**/dist/es6/**"
+  - "!**/dist/demo/**"
+  - "!**/amd/**"
+  - "!**/{.DS_Store,Thumbs.db,thumbs.db,__pycache__}"
+  - "!**/{LICENSE,license,LICENSE.*,*.LICENSE.txt,NOTICE.txt,README.md,readme.md,CHANGELOG.md}"
+  - "!node_modules/rollup-plugin-visualizer"
+  - "!node_modules/js-tiktoken"
+  - "!node_modules/@tavily/core/node_modules/js-tiktoken"
+  - "!node_modules/pdf-parse/lib/pdf.js/{v1.9.426,v1.10.88,v2.0.550}"
+  - "!node_modules/mammoth/{mammoth.browser.js,mammoth.browser.min.js}"
+  - "!node_modules/selection-hook/prebuilds/**/*" # we rebuild .node, don't use prebuilds
+  - "!node_modules/selection-hook/node_modules" # we don't need what in the node_modules dir
+  - "!node_modules/selection-hook/src" # we don't need source files
+  - "!node_modules/tesseract.js-core/{tesseract-core.js,tesseract-core.wasm,tesseract-core.wasm.js}" # we don't need source files
+  - "!node_modules/tesseract.js-core/{tesseract-core-lstm.js,tesseract-core-lstm.wasm,tesseract-core-lstm.wasm.js}" # we don't need source files
+  - "!node_modules/tesseract.js-core/{tesseract-core-simd-lstm.js,tesseract-core-simd-lstm.wasm,tesseract-core-simd-lstm.wasm.js}" # we don't need source files
+  - "!**/*.{h,iobj,ipdb,tlog,recipe,vcxproj,vcxproj.filters,Makefile,*.Makefile}" # filter .node build files
+asarUnpack:
+  - resources/**
+  - "**/*.{metal,exp,lib}"
+  - "node_modules/@img/sharp-libvips-*/**"
+
+win:
+  executableName: Cherry Studio
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+  target:
+    - target: nsis
+    - target: portable
+  signtoolOptions:
+    sign: scripts/win-sign.js
+  verifyUpdateCodeSignature: false
+nsis:
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  allowToChangeInstallationDirectory: true
+  oneClick: false
+  include: build/nsis-installer.nsh
+  buildUniversalInstaller: false
+  differentialPackage: false
+portable:
+  artifactName: ${productName}-${version}-${arch}-portable.${ext}
+  buildUniversalInstaller: false
+mac:
+  entitlementsInherit: build/entitlements.mac.plist
+  notarize: false
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  extendInfo:
+    - NSCameraUsageDescription: Application requests access to the device's camera.
+    - NSMicrophoneUsageDescription: Application requests access to the device's microphone.
+    - NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
+    - NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+  target:
+    - target: dmg
+    - target: zip
+dmg:
+  writeUpdateInfo: false
+linux:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  executableName: CherryStudio
+  target:
+    - target: AppImage
+    - target: deb
+    - target: rpm
+  maintainer: electronjs.org
+  category: Utility
+  desktop:
+    entry:
+      Name: Cherry Studio
+      StartupWMClass: CherryStudio
+  mimeTypes:
+    - x-scheme-handler/cherrystudio
+rpm:
+  # Workaround for electron build issue on rpm package:
+  # https://github.com/electron/forge/issues/3594
+  fpm: ["--rpm-rpmbuild-define=_build_id_links none"]
+publish:
+  provider: generic
+  url: https://releases.cherry-ai.com
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/
+beforePack: scripts/before-pack.js
+afterPack: scripts/after-pack.js
+afterSign: scripts/notarize.js
+artifactBuildCompleted: scripts/artifact-build-completed.js
+releaseInfo:
+  releaseNotes: |
+    <!--LANG:en-->
+    Cherry Studio 1.7.20 - New Models & Features
+
+    ✨ New Features
+    - [Models] Add support for Claude Sonnet 4.6 model with reasoning effort configuration
+    - [Models] Add support for Gemini 3.1 Pro models with reasoning effort and vision capabilities
+    - [Models] Add support for Qwen 3.5 series models
+    - [Models] Add support for Moonshot Kimi K2.5 series models (kimi-k2.5, kimi-k2-thinking, etc.)
+    - [Models] Add support for Zhipu GLM-5 model with thinking tokens and function calling
+    - [Models] Add support for Doubao Seed 2.0 models with function-calling capabilities
+    - [Mini Apps] Add proper region/language tags for all mini apps, pinned apps no longer filtered by region
+    - [Chat] Add keyboard shortcut Cmd+Shift+M (Ctrl+Shift+M) to open model selector
+    - [Search] Add keyword-based topic search with whole-word matching and result sorting
+
+    🐛 Bug Fixes
+    - [i18n] Fix PluginCard translation not updating when language is switched
+    - [OpenClaw] Fix installation failure on Windows when npm path contains spaces
+    <!--LANG:zh-CN-->
+    Cherry Studio 1.7.20 - 新模型与功能
+
+    ✨ 新功能
+    - [模型] 添加 Claude Sonnet 4.6 模型支持，包含推理配置
+    - [模型] 添加 Gemini 3.1 Pro 模型支持，包含推理能力和视觉功能
+    - [模型] 添加 Qwen 3.5 系列模型支持
+    - [模型] 添加 Moonshot Kimi K2.5 系列模型支持（kimi-k2.5、kimi-k2-thinking 等）
+    - [模型] 添加智谱 GLM-5 模型支持，包含思维令牌和函数调用
+    - [模型] 添加豆包 Seed 2.0 模型支持，包含函数调用能力
+    - [小程序] 为所有小程序添加正确的地区/语言标签，固定的小程序不再受地区过滤影响
+    - [聊天] 添加键盘快捷键 Cmd+Shift+M (Ctrl+Shift+M) 打开模型选择器
+    - [搜索] 添加基于关键词的话题搜索，支持全词匹配和结果排序
+
+    🐛 问题修复
+    - [国际化] 修复切换语言时插件卡片翻译不更新的问题
+    - [OpenClaw] 修复 Windows 上 npm 路径包含空格时的安装失败问题
+    <!--LANG:END-->
