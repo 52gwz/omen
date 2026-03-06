@@ -1,4 +1,4 @@
-import { exec } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { browserManager } from './browser'
@@ -15,6 +15,11 @@ export interface ToolDefinition {
 export interface ToolResult {
   content: string
   screenshot?: string
+}
+
+export interface ToolExecOptions {
+  signal?: AbortSignal
+  onOutput?: (chunk: string) => void
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -224,21 +229,107 @@ export const toolDefinitions: ToolDefinition[] = [
 ]
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
-const EXEC_TIMEOUT = 30_000 // 30s
+const DEFAULT_EXEC_TIMEOUT = 120_000 // 120s
+const MAX_OUTPUT_SIZE = MAX_FILE_SIZE * 2
 
 function resolvePath(filePath: string, cwd: string): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath)
 }
 
-async function execCommand(command: string, cwd: string): Promise<string> {
+function killProcessGroup(child: ChildProcess) {
+  if (!child.pid) return
+  try {
+    // kill 整个进程组（负 pid），避免孤儿进程
+    process.kill(-child.pid, 'SIGTERM')
+  } catch {
+    // 进程可能已退出，忽略
+    try { child.kill('SIGTERM') } catch {}
+  }
+}
+
+async function execCommand(
+  command: string,
+  cwd: string,
+  options?: { signal?: AbortSignal; onOutput?: (chunk: string) => void },
+): Promise<string> {
+  try {
+    const stat = await fs.stat(cwd)
+    if (!stat.isDirectory()) {
+      return `[error] 工作目录不是有效目录: ${cwd}`
+    }
+  } catch {
+    return `[error] 工作目录不存在: ${cwd}`
+  }
+
+  if (options?.signal?.aborted) {
+    return '[stopped] 操作已取消'
+  }
+
+  const shell = process.env.SHELL || '/bin/zsh'
+
   return new Promise((resolve) => {
-    exec(command, { cwd, timeout: EXEC_TIMEOUT, maxBuffer: MAX_FILE_SIZE * 2 }, (error, stdout, stderr) => {
-      const parts: string[] = []
-      if (stdout) parts.push(stdout)
-      if (stderr) parts.push(`[stderr]\n${stderr}`)
-      if (error && error.killed) parts.push(`[timeout] 命令执行超过 ${EXEC_TIMEOUT / 1000}s 已终止`)
-      else if (error && !stderr) parts.push(`[error] ${error.message}`)
-      resolve(parts.join('\n') || '(无输出)')
+    const child = spawn(shell, ['-l', '-c', command], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+      detached: true,
+    })
+
+    let output = ''
+    let killed = false
+    let killReason = ''
+
+    const append = (text: string) => {
+      if (output.length < MAX_OUTPUT_SIZE) {
+        output += text
+      }
+      options?.onOutput?.(text)
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => append(chunk.toString()))
+    child.stderr?.on('data', (chunk: Buffer) => append(`[stderr] ${chunk.toString()}`))
+
+    // 用户停止对话 → kill 整个进程组
+    const onAbort = () => {
+      if (killed) return
+      killed = true
+      killReason = 'stopped'
+      killProcessGroup(child)
+    }
+    if (options?.signal) {
+      if (options.signal.aborted) {
+        onAbort()
+      } else {
+        options.signal.addEventListener('abort', onAbort, { once: true })
+      }
+    }
+
+    // 超时保护
+    const timer = setTimeout(() => {
+      if (killed) return
+      killed = true
+      killReason = 'timeout'
+      killProcessGroup(child)
+    }, DEFAULT_EXEC_TIMEOUT)
+
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      options?.signal?.removeEventListener('abort', onAbort)
+
+      if (killReason === 'stopped') {
+        append('\n[stopped] 用户已停止，命令已终止')
+      } else if (killReason === 'timeout') {
+        append(`\n[timeout] 命令执行超过 ${DEFAULT_EXEC_TIMEOUT / 1000}s 已终止`)
+      } else if (code !== 0 && code !== null) {
+        append(`\n[exit code: ${code}]`)
+      }
+      resolve(output || '(无输出)')
+    })
+
+    child.on('error', (err) => {
+      clearTimeout(timer)
+      options?.signal?.removeEventListener('abort', onAbort)
+      resolve(output + `\n[error] ${err.message}`)
     })
   })
 }
@@ -393,11 +484,11 @@ function text(content: string): ToolResult {
   return { content }
 }
 
-export async function executeTool(name: string, args: Record<string, unknown>, cwd: string): Promise<ToolResult> {
+export async function executeTool(name: string, args: Record<string, unknown>, cwd: string, options?: ToolExecOptions): Promise<ToolResult> {
   try {
     switch (name) {
       case 'exec_command':
-        return text(await execCommand(args.command as string, cwd))
+        return text(await execCommand(args.command as string, cwd, options))
       case 'read_file':
         return text(await readFile(args.path as string, cwd))
       case 'write_file':

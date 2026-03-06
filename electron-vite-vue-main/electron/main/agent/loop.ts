@@ -1,6 +1,6 @@
 import type { WebContents } from 'electron'
 import { ipcMain } from 'electron'
-import { toolDefinitions, executeTool, type ToolResult } from './tools'
+import { toolDefinitions, executeTool, type ToolResult, type ToolExecOptions } from './tools'
 import { buildSystemPrompt } from './system-prompt'
 
 type MessageContent =
@@ -37,6 +37,7 @@ interface AgentRunParams {
   cwd: string
   sender: WebContents
   maxIterations: number
+  signal?: AbortSignal
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -66,8 +67,9 @@ async function streamOnce(params: {
   baseURL: string
   requestId: string
   sender: WebContents
+  signal?: AbortSignal
 }): Promise<{ content: string; reasoning: string; toolCalls: ToolCall[]; finishReason: string }> {
-  const { allMessages, model, apiKey, baseURL, requestId, sender } = params
+  const { allMessages, model, apiKey, baseURL, requestId, sender, signal } = params
 
   const response = await fetch(`${baseURL}/chat/completions`, {
     method: 'POST',
@@ -82,6 +84,7 @@ async function streamOnce(params: {
       tools: toolDefinitions,
       tool_choice: 'auto',
     }),
+    signal,
   })
 
   if (!response.ok) {
@@ -98,6 +101,7 @@ async function streamOnce(params: {
   const toolCallAccum = new Map<number, ToolCall>()
 
   while (true) {
+    if (signal?.aborted) break
     const { value, done } = await reader.read()
     if (done) break
 
@@ -155,32 +159,60 @@ const SAFE_TOOLS = new Set([
   'browser_close',
 ])
 
-function waitForConfirmation(requestId: string, toolCallId: string): Promise<boolean> {
+const SAFE_COMMANDS = new Set([
+  'cat', 'head', 'tail', 'wc', 'ls', 'pwd', 'echo', 'which', 'whoami',
+  'date', 'env', 'printenv', 'uname', 'file', 'stat', 'du', 'df',
+  'find', 'grep', 'rg', 'ag', 'tree', 'git status', 'git log', 'git diff', 'git branch',
+])
+
+const SAFE_COMMAND_PREFIXES = [
+  'git status', 'git log', 'git diff', 'git branch',
+]
+
+function isExecCommandSafe(args: Record<string, unknown>): boolean {
+  const cmd = (args.command as string || '').trim()
+  if (!cmd) return false
+  const first = cmd.split(/\s+/)[0]
+  if (SAFE_COMMANDS.has(first)) return true
+  return SAFE_COMMAND_PREFIXES.some((prefix) => cmd.startsWith(prefix))
+}
+
+function waitForConfirmation(requestId: string, toolCallId: string, signal?: AbortSignal): Promise<boolean> {
   return new Promise((resolve) => {
     const confirmChannel = `agent:tool-confirm`
     const rejectChannel = `agent:tool-reject`
 
-    const onConfirm = (_: any, data: { requestId: string; toolCallId: string }) => {
-      if (data.requestId !== requestId || data.toolCallId !== toolCallId) return
+    function cleanup() {
       ipcMain.removeListener(confirmChannel, onConfirm)
       ipcMain.removeListener(rejectChannel, onReject)
+    }
+
+    const onConfirm = (_: any, data: { requestId: string; toolCallId: string }) => {
+      if (data.requestId !== requestId || data.toolCallId !== toolCallId) return
+      cleanup()
       resolve(true)
     }
 
     const onReject = (_: any, data: { requestId: string; toolCallId: string }) => {
       if (data.requestId !== requestId || data.toolCallId !== toolCallId) return
-      ipcMain.removeListener(confirmChannel, onConfirm)
-      ipcMain.removeListener(rejectChannel, onReject)
+      cleanup()
       resolve(false)
     }
 
     ipcMain.on(confirmChannel, onConfirm)
     ipcMain.on(rejectChannel, onReject)
+
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        cleanup()
+        resolve(false)
+      }, { once: true })
+    }
   })
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, signal } = params
 
   const allMessages: Message[] = [
     { role: 'system', content: buildSystemPrompt(cwd) },
@@ -188,10 +220,14 @@ export async function runAgentLoop(params: AgentRunParams) {
   ]
 
   for (let i = 0; i < maxIterations; i++) {
+    if (signal?.aborted) {
+      sender.send('agent:done', { requestId, stopped: true })
+      return
+    }
     if (i > 0) {
       sender.send('agent:new-turn', { requestId })
     }
-    const result = await streamOnce({ allMessages, model, apiKey, baseURL, requestId, sender })
+    const result = await streamOnce({ allMessages, model, apiKey, baseURL, requestId, sender, signal })
 
     if (result.toolCalls.length === 0) {
       // No tool calls - normal text response, done
@@ -208,6 +244,11 @@ export async function runAgentLoop(params: AgentRunParams) {
     allMessages.push(assistantMsg)
 
     for (const tc of result.toolCalls) {
+      if (signal?.aborted) {
+        sender.send('agent:done', { requestId, stopped: true })
+        return
+      }
+
       let args: Record<string, unknown>
       try {
         args = JSON.parse(tc.function.arguments)
@@ -216,6 +257,7 @@ export async function runAgentLoop(params: AgentRunParams) {
       }
 
       const isSafe = SAFE_TOOLS.has(tc.function.name)
+        || (tc.function.name === 'exec_command' && isExecCommandSafe(args))
 
       sender.send('agent:tool-pending', {
         requestId,
@@ -227,7 +269,11 @@ export async function runAgentLoop(params: AgentRunParams) {
 
       let confirmed = true
       if (!isSafe) {
-        confirmed = await waitForConfirmation(requestId, tc.id)
+        confirmed = await waitForConfirmation(requestId, tc.id, signal)
+        if (signal?.aborted) {
+          sender.send('agent:done', { requestId, stopped: true })
+          return
+        }
       }
 
       if (!confirmed) {
@@ -248,7 +294,13 @@ export async function runAgentLoop(params: AgentRunParams) {
 
       sender.send('agent:tool-running', { requestId, toolCallId: tc.id })
 
-      const toolResult: ToolResult = await executeTool(tc.function.name, args, cwd)
+      const execOptions: ToolExecOptions = {
+        signal,
+        onOutput: (chunk) => {
+          sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
+        },
+      }
+      const toolResult: ToolResult = await executeTool(tc.function.name, args, cwd, execOptions)
 
       let toolContent: MessageContent = toolResult.content
       if (toolResult.screenshot) {

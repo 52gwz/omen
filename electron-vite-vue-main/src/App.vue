@@ -1,44 +1,80 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, reactive } from 'vue'
 import ChatView from './components/ChatView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 
 const showSettings = ref(false)
-const chatRef = ref<InstanceType<typeof ChatView>>()
+const chatRefs = ref<Record<string, InstanceType<typeof ChatView>>>({})
 
 const activeConvId = ref('')
+const openedConvIds = ref<string[]>([])
+const runningConvIds = reactive(new Set<string>())
 
 function onSettingsClose() {
   showSettings.value = false
-  chatRef.value?.loadConfig()
+  for (const r of Object.values(chatRefs.value)) {
+    r?.loadConfig()
+  }
 }
 
 function onSelectConversation(convId: string) {
   activeConvId.value = convId
+  if (!openedConvIds.value.includes(convId)) {
+    openedConvIds.value.push(convId)
+  }
 }
 
 function onNoSelection() {
   activeConvId.value = ''
+}
+
+function onDeleteConversation(convId: string) {
+  openedConvIds.value = openedConvIds.value.filter((id) => id !== convId)
+  runningConvIds.delete(convId)
+  delete chatRefs.value[convId]
+  if (activeConvId.value === convId) {
+    activeConvId.value = ''
+  }
+}
+
+function onStreamingChange(convId: string, streaming: boolean) {
+  if (streaming) {
+    runningConvIds.add(convId)
+  } else {
+    runningConvIds.delete(convId)
+  }
+}
+
+function setChatRef(convId: string, el: any) {
+  if (el) {
+    chatRefs.value[convId] = el
+  } else {
+    delete chatRefs.value[convId]
+  }
 }
 </script>
 
 <template>
   <div class="app-root">
     <Sidebar
+      :running-conv-ids="runningConvIds"
       @select-conversation="onSelectConversation"
       @no-selection="onNoSelection"
+      @delete-conversation="onDeleteConversation"
     />
 
     <div class="main-area">
       <ChatView
-        v-if="activeConvId"
-        ref="chatRef"
-        :key="activeConvId"
-        :conversation-id="activeConvId"
+        v-for="convId in openedConvIds"
+        v-show="convId === activeConvId"
+        :key="convId"
+        :ref="(el: any) => setChatRef(convId, el)"
+        :conversation-id="convId"
+        @streaming-change="(s: boolean) => onStreamingChange(convId, s)"
       />
 
-      <div v-else class="no-conv-placeholder">
+      <div v-if="!activeConvId" class="no-conv-placeholder">
         <p>选择或创建一个对话</p>
       </div>
 

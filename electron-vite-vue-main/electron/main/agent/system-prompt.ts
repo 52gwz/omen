@@ -45,6 +45,7 @@ export function buildSystemPrompt(cwd: string): string {
 
 ### 使用原则
 
+- 读取文件内容时必须使用 read_file，不要用 exec_command 调用 cat/head/tail 等命令。搜索时使用 grep_search 而非 exec_command 调用 grep/find。始终优先使用专用工具而非 exec_command 来完成等效操作。
 - 先用 list_directory、grep_search 和 read_file 了解项目结构和现有代码，再做修改。
 - 修改已有文件时优先使用 edit_file 做局部替换，而不是 write_file 覆写整个文件。
 - edit_file 的 old_string 必须包含足够的上下文以保证唯一匹配。

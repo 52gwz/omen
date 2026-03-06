@@ -37,6 +37,9 @@ contextBridge.exposeInMainWorld('aiChat', {
   startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }) {
     ipcRenderer.send('ai:chat-stream', payload)
   },
+  stopStream(requestId: string) {
+    ipcRenderer.send('ai:chat-stream-stop', { requestId })
+  },
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void) {
     const handler = (_: any, data: { requestId: string; delta: string }) => callback(data)
     ipcRenderer.on('ai:chat-stream-reasoning', handler)
@@ -63,6 +66,9 @@ contextBridge.exposeInMainWorld('aiChat', {
 contextBridge.exposeInMainWorld('agentChat', {
   start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }) {
     ipcRenderer.send('agent:start', payload)
+  },
+  stop(requestId: string) {
+    ipcRenderer.send('agent:stop', { requestId })
   },
   confirmTool(requestId: string, toolCallId: string) {
     ipcRenderer.send('agent:tool-confirm', { requestId, toolCallId })
@@ -94,6 +100,11 @@ contextBridge.exposeInMainWorld('agentChat', {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:tool-result', handler)
     return () => { ipcRenderer.off('agent:tool-result', handler) }
+  },
+  onToolOutputStream(callback: (data: { requestId: string; toolCallId: string; chunk: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:tool-output-stream', handler)
+    return () => { ipcRenderer.off('agent:tool-output-stream', handler) }
   },
   onNewTurn(callback: (data: { requestId: string }) => void) {
     const handler = (_: any, data: any) => callback(data)

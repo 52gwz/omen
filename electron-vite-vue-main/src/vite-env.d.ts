@@ -19,6 +19,7 @@ interface AiChatApi {
   getModels(): Promise<string[]>
   sendMessage(payload: { model: string; messages: { role: string; content: string }[] }): Promise<string>
   startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }): void
+  stopStream(requestId: string): void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamDone(callback: (data: { requestId: string; chunkCount: number }) => void): () => void
@@ -27,12 +28,14 @@ interface AiChatApi {
 
 interface AgentChatApi {
   start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }): void
+  stop(requestId: string): void
   confirmTool(requestId: string, toolCallId: string): void
   rejectTool(requestId: string, toolCallId: string): void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
   onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string; autoApprove: boolean }) => void): () => void
   onToolRunning(callback: (data: { requestId: string; toolCallId: string }) => void): () => void
+  onToolOutputStream(callback: (data: { requestId: string; toolCallId: string; chunk: string }) => void): () => void
   onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean; screenshot?: string }) => void): () => void
   onNewTurn(callback: (data: { requestId: string }) => void): () => void
   onDone(callback: (data: { requestId: string }) => void): () => void

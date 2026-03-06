@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
 import { marked } from 'marked'
 import ToolCallCard from './ToolCallCard.vue'
 
@@ -12,6 +12,10 @@ const props = defineProps<{
   conversationId: string
 }>()
 
+const emit = defineEmits<{
+  streamingChange: [streaming: boolean]
+}>()
+
 interface ToolCallInfo {
   id: string
   name: string
@@ -19,6 +23,7 @@ interface ToolCallInfo {
   status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
   screenshot?: string
+  streamOutput?: string
 }
 
 interface ChatMessage {
@@ -231,6 +236,16 @@ function sendAgentMessage(text: string) {
     }
   })
 
+  const offToolOutputStream = window.agentChat.onToolOutputStream(({ requestId: rid, toolCallId, chunk }) => {
+    if (rid !== requestId) return
+    const msg = getLastAssistant()
+    const tc = msg?.toolCalls?.find((t) => t.id === toolCallId)
+    if (tc) {
+      tc.streamOutput = (tc.streamOutput || '') + chunk
+      scrollToBottom()
+    }
+  })
+
   const offToolResult = window.agentChat.onToolResult(({ requestId: rid, toolCallId, result, rejected, screenshot }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
@@ -238,6 +253,7 @@ function sendAgentMessage(text: string) {
     if (tc) {
       tc.status = rejected ? 'rejected' : 'completed'
       tc.result = result
+      tc.streamOutput = undefined
       if (screenshot) tc.screenshot = screenshot
       scrollToBottom()
     }
@@ -272,6 +288,7 @@ function sendAgentMessage(text: string) {
     offChunk()
     offToolPending()
     offToolRunning()
+    offToolOutputStream()
     offToolResult()
     offNewTurn()
     offDone()
@@ -311,6 +328,15 @@ async function sendMessage() {
   }
 }
 
+function stopGeneration() {
+  if (!isStreaming.value || !currentRequestId) return
+  if (chatMode.value === 'agent') {
+    window.agentChat.stop(currentRequestId)
+  } else {
+    window.aiChat.stopStream(currentRequestId)
+  }
+}
+
 function confirmTool(toolCallId: string) {
   window.agentChat.confirmTool(currentRequestId, toolCallId)
 }
@@ -320,7 +346,7 @@ function rejectTool(toolCallId: string) {
 }
 
 function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     sendMessage()
   }
@@ -351,6 +377,10 @@ const cwdDisplay = computed(() => {
   return parts.length > 2 ? '.../' + parts.slice(-2).join('/') : cwd
 })
 
+watch(isStreaming, (val) => {
+  emit('streamingChange', val)
+})
+
 onMounted(() => {
   loadConfig()
   loadCwd()
@@ -361,6 +391,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', handleClickOutside)
+  if (isStreaming.value && currentRequestId) {
+    if (chatMode.value === 'agent') {
+      window.agentChat.stop(currentRequestId)
+    } else {
+      window.aiChat.stopStream(currentRequestId)
+    }
+  }
 })
 
 defineExpose({ loadConfig })
@@ -391,7 +428,16 @@ defineExpose({ loadConfig })
         class="message-row"
         :class="msg.role"
       >
-        <div class="message-bubble" :class="{ 'agent-bubble': chatMode === 'agent' && msg.role === 'assistant' }">
+        <!-- Thinking indicator (outside bubble, no background) -->
+        <div
+          v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.content && !msg.reasoning && !msg.toolCalls?.length"
+          class="thinking-indicator"
+        >
+          <span class="thinking-text">正在思考</span>
+          <span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
+        </div>
+
+        <div v-else class="message-bubble" :class="{ 'agent-bubble': chatMode === 'agent' && msg.role === 'assistant' }">
           <!-- Reasoning -->
           <div v-if="msg.reasoning" class="chat-reasoning">
             <button class="reasoning-toggle" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
@@ -425,6 +471,7 @@ defineExpose({ loadConfig })
               :status="tc.status"
               :result="tc.result"
               :screenshot="tc.screenshot"
+              :stream-output="tc.streamOutput"
               @confirm="confirmTool(tc.id)"
               @reject="rejectTool(tc.id)"
             />
@@ -486,7 +533,12 @@ defineExpose({ loadConfig })
           @keydown="handleKeydown"
           @input="autoResize"
         />
-        <button class="send-btn" :disabled="!canSend" @click="sendMessage">
+        <button v-if="isStreaming" class="stop-btn" @click="stopGeneration" title="终止对话">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+        </button>
+        <button v-else class="send-btn" :disabled="!canSend" @click="sendMessage">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13" />
             <polygon points="22 2 15 22 11 13 2 9 22 2" />
@@ -554,7 +606,7 @@ defineExpose({ loadConfig })
 .messages-area {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 16px 16px 80px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -813,6 +865,35 @@ defineExpose({ loadConfig })
   margin-bottom: 2px;
 }
 
+.thinking-indicator {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 4px 2px;
+}
+
+.thinking-text {
+  font-size: 0.85rem;
+  color: var(--c-overlay0);
+  animation: thinking-pulse 2s ease-in-out infinite;
+}
+
+.thinking-dots {
+  display: inline-flex;
+  gap: 0;
+}
+
+.thinking-dots span {
+  font-size: 0.85rem;
+  color: var(--c-overlay0);
+  animation: thinking-pulse 2s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
 .cursor-blink {
   animation: blink 1s step-end infinite;
 }
@@ -1006,5 +1087,25 @@ defineExpose({ loadConfig })
 .send-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.stop-btn {
+  background: var(--c-red, #e64553);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.stop-btn:hover {
+  opacity: 0.85;
 }
 </style>

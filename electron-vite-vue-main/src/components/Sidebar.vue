@@ -2,9 +2,14 @@
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useTheme } from '../composables/useTheme'
 
+const props = defineProps<{
+  runningConvIds: Set<string>
+}>()
+
 const emit = defineEmits<{
   selectConversation: [convId: string]
   noSelection: []
+  deleteConversation: [convId: string]
 }>()
 
 const { theme, toggleTheme } = useTheme()
@@ -31,6 +36,7 @@ async function deleteConversation(convId: string) {
   await window.conversationApi.delete(convId)
   const idx = conversations.findIndex((c) => c.id === convId)
   if (idx >= 0) conversations.splice(idx, 1)
+  emit('deleteConversation', convId)
   if (activeConvId.value === convId) {
     activeConvId.value = ''
     emit('noSelection')
@@ -114,6 +120,7 @@ defineExpose({ loadConversations })
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
         <span class="conv-title">{{ conv.title }}</span>
+        <span v-if="runningConvIds.has(conv.id)" class="running-dot" title="运行中"></span>
       </div>
       <div v-if="!conversations.length" class="empty-hint">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -260,6 +267,21 @@ defineExpose({ loadConversations })
 .empty-hint-sub {
   font-size: 0.72rem !important;
   color: var(--c-surface1) !important;
+}
+
+.running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--c-green, #40a02b);
+  flex-shrink: 0;
+  margin-left: auto;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .ctx-menu {

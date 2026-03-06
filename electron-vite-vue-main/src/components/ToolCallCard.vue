@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 
 const props = defineProps<{
   name: string
@@ -7,6 +7,7 @@ const props = defineProps<{
   status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
   screenshot?: string
+  streamOutput?: string
 }>()
 
 const emit = defineEmits<{
@@ -63,6 +64,22 @@ const truncatedResult = computed(() => {
   if (props.result.length > 2000) return props.result.slice(0, 2000) + '\n... (已截断)'
   return props.result
 })
+
+const truncatedStreamOutput = computed(() => {
+  if (!props.streamOutput) return ''
+  if (props.streamOutput.length > 4000) return '... (前面输出已截断)\n' + props.streamOutput.slice(-3000)
+  return props.streamOutput
+})
+
+const streamOutputEl = ref<HTMLElement>()
+
+watch(() => props.streamOutput, () => {
+  nextTick(() => {
+    if (streamOutputEl.value) {
+      streamOutputEl.value.scrollTop = streamOutputEl.value.scrollHeight
+    }
+  })
+})
 </script>
 
 <template>
@@ -87,8 +104,13 @@ const truncatedResult = computed(() => {
     </div>
 
     <div v-if="status === 'running'" class="tool-running">
-      <span class="spinner"></span>
-      <span>执行中...</span>
+      <div class="tool-running-header">
+        <span class="spinner"></span>
+        <span>执行中...</span>
+      </div>
+      <div v-if="streamOutput" ref="streamOutputEl" class="stream-output-panel">
+        <pre class="stream-output-content">{{ truncatedStreamOutput }}</pre>
+      </div>
     </div>
 
     <!-- Screenshot preview -->
@@ -226,11 +248,33 @@ const truncatedResult = computed(() => {
 }
 
 .tool-running {
+  font-size: 0.82rem;
+  color: var(--c-blue);
+}
+
+.tool-running-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.82rem;
-  color: var(--c-blue);
+}
+
+.stream-output-panel {
+  margin-top: 8px;
+  background: var(--c-base);
+  border-radius: 8px;
+  padding: 10px 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.stream-output-content {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--c-subtext0);
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  line-height: 1.5;
 }
 
 .spinner {

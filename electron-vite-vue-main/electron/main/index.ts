@@ -97,6 +97,8 @@ const indexHtml = path.join(RENDERER_DIST, 'index.html')
 async function createWindow() {
   win = new BrowserWindow({
     title: 'Main window',
+    width: 1280,
+    height: 760,
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
@@ -211,6 +213,9 @@ ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: 
     console.log(`  [${m.role}] ${m.content.length > 200 ? m.content.slice(0, 200) + '...' : m.content}`)
   }
 
+  const abortController = new AbortController()
+  activeAbortControllers.set(requestId, abortController)
+
   try {
     const { apiKey, baseURL } = getAiConfig()
     const response = await fetch(`${baseURL}/chat/completions`, {
@@ -220,6 +225,7 @@ ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: 
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ model, stream: true, messages }),
+      signal: abortController.signal,
     })
 
     if (!response.ok) {
@@ -237,6 +243,7 @@ ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: 
     let fullReasoning = ''
 
     while (true) {
+      if (abortController.signal.aborted) break
       const { value, done } = await reader.read()
       if (done) break
 
@@ -277,8 +284,36 @@ ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: 
 
     sender.send('ai:chat-stream-done', { requestId, chunkCount })
   } catch (err: any) {
+    if (err.name === 'AbortError') {
+      sender.send('ai:chat-stream-done', { requestId, chunkCount: 0, stopped: true })
+      return
+    }
     console.error(`[Chat ${requestId.slice(0, 8)}] error: ${err.message || err}`)
     sender.send('ai:chat-stream-error', { requestId, message: err.message || String(err) })
+  } finally {
+    activeAbortControllers.delete(requestId)
+  }
+})
+
+// ---- Abort tracking ----
+
+const activeAbortControllers = new Map<string, AbortController>()
+
+ipcMain.on('ai:chat-stream-stop', (_, data: { requestId: string }) => {
+  const ac = activeAbortControllers.get(data.requestId)
+  if (ac) {
+    ac.abort()
+    activeAbortControllers.delete(data.requestId)
+    console.log(`[Chat ${data.requestId.slice(0, 8)}] stopped by user`)
+  }
+})
+
+ipcMain.on('agent:stop', (_, data: { requestId: string }) => {
+  const ac = activeAbortControllers.get(data.requestId)
+  if (ac) {
+    ac.abort()
+    activeAbortControllers.delete(data.requestId)
+    console.log(`[Agent ${data.requestId.slice(0, 8)}] stopped by user`)
   }
 })
 
@@ -293,19 +328,33 @@ ipcMain.on('agent:start', async (event, payload: {
   messages: { role: string; content: string }[]
   cwd: string
 }) => {
-  const { requestId, model, messages, cwd } = payload
+  const { requestId, model, messages } = payload
   const sender = event.sender
+  const cwd = (!payload.cwd || payload.cwd === '~')
+    ? os.homedir()
+    : payload.cwd.startsWith('~/')
+      ? path.join(os.homedir(), payload.cwd.slice(2))
+      : payload.cwd
 
   console.log(`\n[Agent ${requestId.slice(0, 8)}] model=${model} cwd=${cwd}`)
+
+  const abortController = new AbortController()
+  activeAbortControllers.set(requestId, abortController)
 
   try {
     const { apiKey, baseURL } = getAiConfig()
     const maxIterations = store.get('maxIterations') || 20
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations })
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, signal: abortController.signal })
   } catch (err: any) {
+    if (err.name === 'AbortError') {
+      sender.send('agent:done', { requestId, stopped: true })
+      return
+    }
     console.error(`[Agent ${requestId.slice(0, 8)}] error: ${err.message || err}`)
     sender.send('agent:error', { requestId, message: err.message || String(err) })
     sender.send('agent:done', { requestId })
+  } finally {
+    activeAbortControllers.delete(requestId)
   }
 })
 
