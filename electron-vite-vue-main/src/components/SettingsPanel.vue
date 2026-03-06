@@ -6,6 +6,7 @@ const emit = defineEmits<{ close: [] }>()
 const apiKey = ref('')
 const baseURL = ref('https://api.openai.com/v1')
 const defaultModel = ref('gpt-4o-mini')
+const maxIterations = ref(20)
 const saving = ref(false)
 const message = ref('')
 
@@ -19,6 +20,7 @@ onMounted(async () => {
     apiKey.value = config.apiKey
     baseURL.value = config.baseURL
     defaultModel.value = config.defaultModel
+    maxIterations.value = config.maxIterations || 20
   } catch {}
 })
 
@@ -55,6 +57,7 @@ async function save() {
       apiKey: apiKey.value,
       baseURL: baseURL.value,
       defaultModel: defaultModel.value,
+      maxIterations: maxIterations.value,
     })
     message.value = '保存成功'
     setTimeout(() => emit('close'), 600)
@@ -117,6 +120,11 @@ async function save() {
             </button>
           </div>
         </div>
+
+        <label>
+          <span>Agent 最大迭代次数</span>
+          <input v-model.number="maxIterations" type="number" min="1" max="200" placeholder="20" />
+        </label>
 
         <p v-if="message" class="settings-message">{{ message }}</p>
 

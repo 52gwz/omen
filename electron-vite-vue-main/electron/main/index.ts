@@ -19,9 +19,10 @@ interface ProjectData {
 
 interface ConversationMeta {
   id: string
-  projectId: string
+  projectId?: string
   title: string
   createdAt: number
+  cwd?: string
 }
 
 interface StoredMessage {
@@ -33,6 +34,7 @@ type StoreSchema = {
   apiKey: string
   baseURL: string
   defaultModel: string
+  maxIterations: number
   projects: ProjectData[]
   conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
 }
@@ -42,6 +44,7 @@ const store = new Store<StoreSchema>({
     apiKey: '',
     baseURL: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
+    maxIterations: 20,
     projects: [],
     conversations: {},
   },
@@ -134,6 +137,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+app.on('before-quit', async () => {
+  if (browserManager.isActive()) {
+    await browserManager.close().catch(() => {})
+  }
+})
+
 app.on('second-instance', () => {
   if (win) {
     // Focus on the main window if the user tried to open another
@@ -158,13 +167,15 @@ ipcMain.handle('ai:get-config', () => {
     apiKey: store.get('apiKey'),
     baseURL: store.get('baseURL'),
     defaultModel: store.get('defaultModel'),
+    maxIterations: store.get('maxIterations'),
   }
 })
 
-ipcMain.handle('ai:save-config', (_, config: { apiKey: string; baseURL: string; defaultModel: string }) => {
+ipcMain.handle('ai:save-config', (_, config: { apiKey: string; baseURL: string; defaultModel: string; maxIterations: number }) => {
   store.set('apiKey', config.apiKey)
   store.set('baseURL', config.baseURL)
   store.set('defaultModel', config.defaultModel)
+  store.set('maxIterations', config.maxIterations)
 })
 
 ipcMain.handle('ai:models', async () => {
@@ -274,6 +285,7 @@ ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: 
 // ---- Agent IPC Handlers ----
 
 import { runAgentLoop } from './agent/loop'
+import { browserManager } from './agent/browser'
 
 ipcMain.on('agent:start', async (event, payload: {
   requestId: string
@@ -288,7 +300,8 @@ ipcMain.on('agent:start', async (event, payload: {
 
   try {
     const { apiKey, baseURL } = getAiConfig()
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender })
+    const maxIterations = store.get('maxIterations') || 20
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations })
   } catch (err: any) {
     console.error(`[Agent ${requestId.slice(0, 8)}] error: ${err.message || err}`)
     sender.send('agent:error', { requestId, message: err.message || String(err) })
@@ -350,18 +363,16 @@ ipcMain.handle('project:check-path', (_, folderPath: string): boolean => {
   }
 })
 
-ipcMain.handle('conversation:list', (_, projectId: string): ConversationMeta[] => {
+ipcMain.handle('conversation:list', (): ConversationMeta[] => {
   const conversations = store.get('conversations') || {}
   return Object.values(conversations)
-    .filter((c) => c.meta.projectId === projectId)
     .map((c) => c.meta)
     .sort((a, b) => b.createdAt - a.createdAt)
 })
 
-ipcMain.handle('conversation:create', (_, projectId: string, title: string): ConversationMeta => {
+ipcMain.handle('conversation:create', (_, title: string): ConversationMeta => {
   const meta: ConversationMeta = {
     id: crypto.randomUUID(),
-    projectId,
     title: title || '新对话',
     createdAt: Date.now(),
   }
@@ -369,6 +380,19 @@ ipcMain.handle('conversation:create', (_, projectId: string, title: string): Con
   conversations[meta.id] = { meta, messages: [] }
   store.set('conversations', conversations)
   return meta
+})
+
+ipcMain.handle('conversation:set-cwd', (_, convId: string, cwd: string) => {
+  const conversations = store.get('conversations') || {}
+  if (conversations[convId]) {
+    conversations[convId].meta.cwd = cwd
+    store.set('conversations', conversations)
+  }
+})
+
+ipcMain.handle('conversation:get-cwd', (_, convId: string): string => {
+  const conversations = store.get('conversations') || {}
+  return conversations[convId]?.meta.cwd || ''
 })
 
 ipcMain.handle('conversation:delete', (_, convId: string) => {

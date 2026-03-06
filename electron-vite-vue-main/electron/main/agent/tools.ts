@@ -1,6 +1,7 @@
 import { exec } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { browserManager } from './browser'
 
 export interface ToolDefinition {
   type: 'function'
@@ -9,6 +10,11 @@ export interface ToolDefinition {
     description: string
     parameters: Record<string, unknown>
   }
+}
+
+export interface ToolResult {
+  content: string
+  screenshot?: string
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -98,6 +104,120 @@ export const toolDefinitions: ToolDefinition[] = [
           new_string: { type: 'string', description: '替换后的新文本' },
         },
         required: ['path', 'old_string', 'new_string'],
+      },
+    },
+  },
+
+  // ---- Browser tools (vision-first) ----
+  {
+    type: 'function',
+    function: {
+      name: 'browser_navigate',
+      description: '在浏览器中导航到指定 URL。首次调用时会自动启动浏览器。',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: '要导航到的 URL' },
+        },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_screenshot',
+      description: '截取当前页面截图。这是你观察页面的主要方式。截图坐标系与点击坐标系一致。每次操作后都应截图确认结果。',
+      parameters: {
+        type: 'object',
+        properties: {
+          full_page: { type: 'boolean', description: '是否截取整个页面（含滚动区域），默认 false' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click',
+      description: '点击页面上的位置。优先使用坐标 (x, y) 基于截图定位，也可用 CSS 选择器作为后备。',
+      parameters: {
+        type: 'object',
+        properties: {
+          x: { type: 'number', description: '点击的 x 坐标（基于截图）' },
+          y: { type: 'number', description: '点击的 y 坐标（基于截图）' },
+          selector: { type: 'string', description: '备用：CSS 选择器' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_type',
+      description: '输入文本。通过坐标 (x, y) 点击输入框后输入，也可用 CSS 选择器定位。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '要输入的文本' },
+          x: { type: 'number', description: '输入框的 x 坐标（基于截图）' },
+          y: { type: 'number', description: '输入框的 y 坐标（基于截图）' },
+          selector: { type: 'string', description: '备用：CSS 选择器' },
+        },
+        required: ['text'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_get_text',
+      description: '辅助工具：获取页面或指定元素的可见文本内容。仅返回屏幕上可见的文本。',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string', description: 'CSS 选择器，可选。不提供则返回页面可见文本' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_scroll',
+      description: '滚动页面。滚动后应截图查看新内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          direction: { type: 'string', enum: ['up', 'down'], description: '滚动方向' },
+          amount: { type: 'number', description: '滚动距离（像素），默认 500' },
+        },
+        required: ['direction'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_evaluate',
+      description: '辅助工具：在页面中执行 JavaScript 代码并返回结果。用于获取截图无法提供的数据。',
+      parameters: {
+        type: 'object',
+        properties: {
+          script: { type: 'string', description: '要执行的 JavaScript 代码' },
+        },
+        required: ['script'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_close',
+      description: '关闭浏览器。下次使用浏览器工具时会自动重新启动。',
+      parameters: {
+        type: 'object',
+        properties: {},
       },
     },
   },
@@ -269,36 +389,72 @@ async function editFile(
   return `已编辑 ${resolved}（第 ${startLine} 行起，${oldLines} 行 → ${newLines} 行）`
 }
 
-export async function executeTool(name: string, args: Record<string, unknown>, cwd: string): Promise<string> {
+function text(content: string): ToolResult {
+  return { content }
+}
+
+export async function executeTool(name: string, args: Record<string, unknown>, cwd: string): Promise<ToolResult> {
   try {
     switch (name) {
       case 'exec_command':
-        return await execCommand(args.command as string, cwd)
+        return text(await execCommand(args.command as string, cwd))
       case 'read_file':
-        return await readFile(args.path as string, cwd)
+        return text(await readFile(args.path as string, cwd))
       case 'write_file':
-        return await writeFile(args.path as string, args.content as string, cwd)
+        return text(await writeFile(args.path as string, args.content as string, cwd))
       case 'list_directory':
-        return await listDirectory(args.path as string | undefined, cwd)
+        return text(await listDirectory(args.path as string | undefined, cwd))
       case 'grep_search':
-        return await grepSearch(
+        return text(await grepSearch(
           args.pattern as string,
           args.path as string | undefined,
           args.ignore_case as boolean | undefined,
           args.file_glob as string | undefined,
           cwd,
-        )
+        ))
       case 'edit_file':
-        return await editFile(
+        return text(await editFile(
           args.path as string,
           args.old_string as string,
           args.new_string as string,
           cwd,
-        )
+        ))
+
+      // ---- Browser tools ----
+      case 'browser_navigate':
+        return text(await browserManager.navigate(args.url as string))
+      case 'browser_screenshot': {
+        const result = await browserManager.screenshot(args.full_page as boolean | undefined)
+        return { content: result.text, screenshot: result.base64 }
+      }
+      case 'browser_click':
+        return text(await browserManager.click({
+          x: args.x as number | undefined,
+          y: args.y as number | undefined,
+          selector: args.selector as string | undefined,
+        }))
+      case 'browser_type':
+        return text(await browserManager.type(args.text as string, {
+          x: args.x as number | undefined,
+          y: args.y as number | undefined,
+          selector: args.selector as string | undefined,
+        }))
+      case 'browser_get_text':
+        return text(await browserManager.getText(args.selector as string | undefined))
+      case 'browser_scroll':
+        return text(await browserManager.scroll(
+          args.direction as 'up' | 'down',
+          args.amount as number | undefined,
+        ))
+      case 'browser_evaluate':
+        return text(await browserManager.evaluate(args.script as string))
+      case 'browser_close':
+        return text(await browserManager.close())
+
       default:
-        return `[error] 未知工具: ${name}`
+        return text(`[error] 未知工具: ${name}`)
     }
   } catch (err: any) {
-    return `[error] ${err.message || String(err)}`
+    return text(`[error] ${err.message || String(err)}`)
   }
 }

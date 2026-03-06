@@ -7,25 +7,19 @@ import Sidebar from './components/Sidebar.vue'
 const showSettings = ref(false)
 const chatRef = ref<InstanceType<typeof ChatView>>()
 
-const activeProjectId = ref('')
 const activeConvId = ref('')
-const activeProjectPath = ref('')
 
 function onSettingsClose() {
   showSettings.value = false
   chatRef.value?.loadConfig()
 }
 
-function onSelectConversation(projectId: string, convId: string, projectPath: string) {
-  activeProjectId.value = projectId
+function onSelectConversation(convId: string) {
   activeConvId.value = convId
-  activeProjectPath.value = projectPath
 }
 
 function onNoSelection() {
-  activeProjectId.value = ''
   activeConvId.value = ''
-  activeProjectPath.value = ''
 }
 </script>
 
@@ -42,7 +36,6 @@ function onNoSelection() {
         ref="chatRef"
         :key="activeConvId"
         :conversation-id="activeConvId"
-        :project-path="activeProjectPath"
       />
 
       <div v-else class="no-conv-placeholder">

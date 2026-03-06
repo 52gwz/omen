@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed } from 'vue'
 import { marked } from 'marked'
 import ToolCallCard from './ToolCallCard.vue'
 
@@ -10,7 +10,6 @@ marked.setOptions({
 
 const props = defineProps<{
   conversationId: string
-  projectPath: string
 }>()
 
 interface ToolCallInfo {
@@ -19,6 +18,7 @@ interface ToolCallInfo {
   arguments: string
   status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
+  screenshot?: string
 }
 
 interface ChatMessage {
@@ -65,7 +65,7 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 const canSend = computed(() => inputText.value.trim() && !isStreaming.value && !!currentModel.value)
 
-const agentCwd = computed(() => props.projectPath || '~')
+const agentCwd = ref('~')
 
 async function loadConfig() {
   try {
@@ -74,13 +74,25 @@ async function loadConfig() {
   } catch {}
 }
 
+async function loadCwd() {
+  const cwd = await window.conversationApi.getCwd(props.conversationId)
+  agentCwd.value = cwd || '~'
+}
+
+async function changeCwd() {
+  const dir = await window.dialogApi.selectDirectory()
+  if (!dir) return
+  agentCwd.value = dir
+  await window.conversationApi.setCwd(props.conversationId, dir)
+}
+
 async function loadMessages() {
   const stored = await window.conversationApi.getMessages(props.conversationId)
   messages.length = 0
   for (const m of stored) {
     messages.push({ role: m.role as 'user' | 'assistant', content: m.content })
   }
-  scrollToBottom()
+  scrollToBottom(true)
 }
 
 function scheduleSave() {
@@ -91,9 +103,17 @@ function scheduleSave() {
   }, 500)
 }
 
-function scrollToBottom() {
+const isNearBottom = ref(true)
+
+function onMessagesScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+  isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
+
+function scrollToBottom(force = false) {
   nextTick(() => {
-    if (messagesContainer.value) {
+    if (messagesContainer.value && (force || isNearBottom.value)) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
     }
   })
@@ -191,12 +211,12 @@ function sendAgentMessage(text: string) {
     }
   })
 
-  const offToolPending = window.agentChat.onToolPending(({ requestId: rid, toolCallId, name, arguments: args }) => {
+  const offToolPending = window.agentChat.onToolPending(({ requestId: rid, toolCallId, name, arguments: args, autoApprove }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
       if (!msg.toolCalls) msg.toolCalls = []
-      msg.toolCalls.push({ id: toolCallId, name, arguments: args, status: 'pending' })
+      msg.toolCalls.push({ id: toolCallId, name, arguments: args, status: autoApprove ? 'running' : 'pending' })
       scrollToBottom()
     }
   })
@@ -211,13 +231,14 @@ function sendAgentMessage(text: string) {
     }
   })
 
-  const offToolResult = window.agentChat.onToolResult(({ requestId: rid, toolCallId, result, rejected }) => {
+  const offToolResult = window.agentChat.onToolResult(({ requestId: rid, toolCallId, result, rejected, screenshot }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     const tc = msg?.toolCalls?.find((t) => t.id === toolCallId)
     if (tc) {
       tc.status = rejected ? 'rejected' : 'completed'
       tc.result = result
+      if (screenshot) tc.screenshot = screenshot
       scrollToBottom()
     }
   })
@@ -280,7 +301,7 @@ async function sendMessage() {
       inputEl.value.style.height = 'auto'
     }
   })
-  scrollToBottom()
+  scrollToBottom(true)
   scheduleSave()
 
   if (chatMode.value === 'agent') {
@@ -332,6 +353,7 @@ const cwdDisplay = computed(() => {
 
 onMounted(() => {
   loadConfig()
+  loadCwd()
   loadMessages()
   inputEl.value?.focus()
   document.addEventListener('click', handleClickOutside)
@@ -349,16 +371,16 @@ defineExpose({ loadConfig })
     <!-- 顶栏 -->
     <div class="chat-topbar">
       <span class="current-model">{{ currentModel || '未配置模型' }}</span>
-      <span v-if="chatMode === 'agent'" class="cwd-label" :title="agentCwd">
+      <button v-if="chatMode === 'agent'" class="cwd-btn" :title="agentCwd" @click="changeCwd">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
         </svg>
         {{ cwdDisplay }}
-      </span>
+      </button>
     </div>
 
     <!-- 消息列表 -->
-    <div ref="messagesContainer" class="messages-area">
+    <div ref="messagesContainer" class="messages-area" @scroll="onMessagesScroll">
       <div v-if="!messages.length" class="empty-state">
         <p>{{ chatMode === 'agent' ? '描述你的编程任务' : '开始对话吧' }}</p>
       </div>
@@ -402,6 +424,7 @@ defineExpose({ loadConfig })
               :arguments="tc.arguments"
               :status="tc.status"
               :result="tc.result"
+              :screenshot="tc.screenshot"
               @confirm="confirmTool(tc.id)"
               @reject="rejectTool(tc.id)"
             />
@@ -500,7 +523,7 @@ defineExpose({ loadConfig })
   user-select: none;
 }
 
-.cwd-label {
+.cwd-btn {
   -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
@@ -510,9 +533,22 @@ defineExpose({ loadConfig })
   color: var(--c-surface2);
   font-size: 0.75rem;
   white-space: nowrap;
-  max-width: 200px;
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.cwd-btn:hover {
+  color: var(--c-subtext1);
+  background: var(--c-surface0);
+  border-color: var(--c-surface1);
 }
 
 .messages-area {

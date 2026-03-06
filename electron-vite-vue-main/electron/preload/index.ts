@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('aiChat', {
   getConfig() {
     return ipcRenderer.invoke('ai:get-config')
   },
-  saveConfig(config: { apiKey: string; baseURL: string; defaultModel: string }) {
+  saveConfig(config: { apiKey: string; baseURL: string; defaultModel: string; maxIterations: number }) {
     return ipcRenderer.invoke('ai:save-config', config)
   },
   getModels(): Promise<string[]> {
@@ -80,7 +80,7 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:stream-reasoning', handler)
     return () => { ipcRenderer.off('agent:stream-reasoning', handler) }
   },
-  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string }) => void) {
+  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string; autoApprove: boolean }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:tool-pending', handler)
     return () => { ipcRenderer.off('agent:tool-pending', handler) }
@@ -90,7 +90,7 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:tool-running', handler)
     return () => { ipcRenderer.off('agent:tool-running', handler) }
   },
-  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void) {
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean; screenshot?: string }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:tool-result', handler)
     return () => { ipcRenderer.off('agent:tool-result', handler) }
@@ -136,11 +136,11 @@ contextBridge.exposeInMainWorld('projectApi', {
 })
 
 contextBridge.exposeInMainWorld('conversationApi', {
-  list(projectId: string): Promise<{ id: string; projectId: string; title: string; createdAt: number }[]> {
-    return ipcRenderer.invoke('conversation:list', projectId)
+  list(): Promise<{ id: string; title: string; createdAt: number; cwd?: string }[]> {
+    return ipcRenderer.invoke('conversation:list')
   },
-  create(projectId: string, title: string): Promise<{ id: string; projectId: string; title: string; createdAt: number }> {
-    return ipcRenderer.invoke('conversation:create', projectId, title)
+  create(title: string): Promise<{ id: string; title: string; createdAt: number; cwd?: string }> {
+    return ipcRenderer.invoke('conversation:create', title)
   },
   delete(convId: string): Promise<void> {
     return ipcRenderer.invoke('conversation:delete', convId)
@@ -153,6 +153,12 @@ contextBridge.exposeInMainWorld('conversationApi', {
   },
   saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void> {
     return ipcRenderer.invoke('conversation:save-messages', convId, messages)
+  },
+  setCwd(convId: string, cwd: string): Promise<void> {
+    return ipcRenderer.invoke('conversation:set-cwd', convId, cwd)
+  },
+  getCwd(convId: string): Promise<string> {
+    return ipcRenderer.invoke('conversation:get-cwd', convId)
   },
 })
 

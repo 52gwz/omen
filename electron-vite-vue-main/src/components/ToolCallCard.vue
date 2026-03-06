@@ -6,6 +6,7 @@ const props = defineProps<{
   arguments: string
   status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
+  screenshot?: string
 }>()
 
 const emit = defineEmits<{
@@ -22,7 +23,17 @@ const toolLabel: Record<string, string> = {
   list_directory: '列出目录',
   grep_search: '搜索内容',
   edit_file: '编辑文件',
+  browser_navigate: '浏览器导航',
+  browser_screenshot: '页面截图',
+  browser_click: '点击页面',
+  browser_type: '输入文本',
+  browser_get_text: '获取文本',
+  browser_scroll: '滚动页面',
+  browser_evaluate: '执行脚本',
+  browser_close: '关闭浏览器',
 }
+
+const screenshotExpanded = ref(false)
 
 const statusLabel: Record<string, string> = {
   pending: '等待确认',
@@ -78,6 +89,25 @@ const truncatedResult = computed(() => {
     <div v-if="status === 'running'" class="tool-running">
       <span class="spinner"></span>
       <span>执行中...</span>
+    </div>
+
+    <!-- Screenshot preview -->
+    <div v-if="screenshot && (status === 'completed')" class="screenshot-section">
+      <button class="result-toggle" @click="screenshotExpanded = !screenshotExpanded">
+        查看截图
+        <svg
+          class="result-chevron"
+          :class="{ expanded: screenshotExpanded }"
+          width="14" height="14" viewBox="0 0 24 24"
+          fill="none" stroke="currentColor" stroke-width="2.5"
+          stroke-linecap="round" stroke-linejoin="round"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      <div v-if="screenshotExpanded" class="screenshot-panel">
+        <img :src="`data:image/png;base64,${screenshot}`" class="screenshot-img" alt="页面截图" />
+      </div>
     </div>
 
     <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="tool-result-section">
@@ -258,5 +288,29 @@ const truncatedResult = computed(() => {
   word-break: break-all;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   line-height: 1.5;
+}
+
+.screenshot-section {
+  margin-bottom: 4px;
+}
+
+.screenshot-panel {
+  margin-top: 8px;
+  background: var(--c-base);
+  border-radius: 8px;
+  padding: 8px;
+  overflow: hidden;
+}
+
+.screenshot-img {
+  width: 100%;
+  border-radius: 6px;
+  display: block;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.screenshot-img:hover {
+  opacity: 0.9;
 }
 </style>

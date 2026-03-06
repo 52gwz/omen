@@ -10,6 +10,7 @@ interface AiChatConfig {
   apiKey: string
   baseURL: string
   defaultModel: string
+  maxIterations: number
 }
 
 interface AiChatApi {
@@ -30,9 +31,9 @@ interface AgentChatApi {
   rejectTool(requestId: string, toolCallId: string): void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
-  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string }) => void): () => void
+  onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string; autoApprove: boolean }) => void): () => void
   onToolRunning(callback: (data: { requestId: string; toolCallId: string }) => void): () => void
-  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void): () => void
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean; screenshot?: string }) => void): () => void
   onNewTurn(callback: (data: { requestId: string }) => void): () => void
   onDone(callback: (data: { requestId: string }) => void): () => void
   onError(callback: (data: { requestId: string; message: string }) => void): () => void
@@ -50,9 +51,9 @@ interface ProjectData {
 
 interface ConversationMeta {
   id: string
-  projectId: string
   title: string
   createdAt: number
+  cwd?: string
 }
 
 interface ProjectApi {
@@ -63,12 +64,14 @@ interface ProjectApi {
 }
 
 interface ConversationApi {
-  list(projectId: string): Promise<ConversationMeta[]>
-  create(projectId: string, title: string): Promise<ConversationMeta>
+  list(): Promise<ConversationMeta[]>
+  create(title: string): Promise<ConversationMeta>
   delete(convId: string): Promise<void>
   rename(convId: string, title: string): Promise<void>
   getMessages(convId: string): Promise<{ role: string; content: string }[]>
   saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void>
+  setCwd(convId: string, cwd: string): Promise<void>
+  getCwd(convId: string): Promise<string>
 }
 
 interface Window {

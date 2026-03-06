@@ -1,11 +1,16 @@
 import type { WebContents } from 'electron'
 import { ipcMain } from 'electron'
-import { toolDefinitions, executeTool } from './tools'
+import { toolDefinitions, executeTool, type ToolResult } from './tools'
 import { buildSystemPrompt } from './system-prompt'
+
+type MessageContent =
+  | string
+  | null
+  | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
 
 interface Message {
   role: string
-  content: string | null
+  content: MessageContent
   tool_calls?: ToolCall[]
   tool_call_id?: string
 }
@@ -31,6 +36,7 @@ interface AgentRunParams {
   baseURL: string
   cwd: string
   sender: WebContents
+  maxIterations: number
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -138,6 +144,17 @@ async function streamOnce(params: {
   return { content: fullContent, reasoning: fullReasoning, toolCalls, finishReason }
 }
 
+const SAFE_TOOLS = new Set([
+  'read_file',
+  'list_directory',
+  'grep_search',
+  'browser_navigate',
+  'browser_screenshot',
+  'browser_get_text',
+  'browser_scroll',
+  'browser_close',
+])
+
 function waitForConfirmation(requestId: string, toolCallId: string): Promise<boolean> {
   return new Promise((resolve) => {
     const confirmChannel = `agent:tool-confirm`
@@ -163,16 +180,14 @@ function waitForConfirmation(requestId: string, toolCallId: string): Promise<boo
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations } = params
 
   const allMessages: Message[] = [
     { role: 'system', content: buildSystemPrompt(cwd) },
     ...params.messages.map((m) => ({ role: m.role, content: m.content })),
   ]
 
-  const MAX_ITERATIONS = 20
-
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let i = 0; i < maxIterations; i++) {
     if (i > 0) {
       sender.send('agent:new-turn', { requestId })
     }
@@ -192,7 +207,6 @@ export async function runAgentLoop(params: AgentRunParams) {
     }
     allMessages.push(assistantMsg)
 
-    // Process each tool call sequentially
     for (const tc of result.toolCalls) {
       let args: Record<string, unknown>
       try {
@@ -201,19 +215,22 @@ export async function runAgentLoop(params: AgentRunParams) {
         args = {}
       }
 
-      // Notify renderer about pending tool call
+      const isSafe = SAFE_TOOLS.has(tc.function.name)
+
       sender.send('agent:tool-pending', {
         requestId,
         toolCallId: tc.id,
         name: tc.function.name,
         arguments: tc.function.arguments,
+        autoApprove: isSafe,
       })
 
-      // Wait for user confirmation
-      const confirmed = await waitForConfirmation(requestId, tc.id)
+      let confirmed = true
+      if (!isSafe) {
+        confirmed = await waitForConfirmation(requestId, tc.id)
+      }
 
       if (!confirmed) {
-        // User rejected - add rejection as tool result and continue
         const toolMsg: Message = {
           role: 'tool',
           content: '[用户拒绝执行此操作]',
@@ -229,14 +246,21 @@ export async function runAgentLoop(params: AgentRunParams) {
         continue
       }
 
-      // User confirmed - execute the tool
       sender.send('agent:tool-running', { requestId, toolCallId: tc.id })
 
-      const toolResult = await executeTool(tc.function.name, args, cwd)
+      const toolResult: ToolResult = await executeTool(tc.function.name, args, cwd)
+
+      let toolContent: MessageContent = toolResult.content
+      if (toolResult.screenshot) {
+        toolContent = [
+          { type: 'text', text: toolResult.content },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${toolResult.screenshot}` } },
+        ]
+      }
 
       const toolMsg: Message = {
         role: 'tool',
-        content: toolResult,
+        content: toolContent,
         tool_call_id: tc.id,
       }
       allMessages.push(toolMsg)
@@ -244,8 +268,9 @@ export async function runAgentLoop(params: AgentRunParams) {
       sender.send('agent:tool-result', {
         requestId,
         toolCallId: tc.id,
-        result: toolResult,
+        result: toolResult.content,
         rejected: false,
+        screenshot: toolResult.screenshot,
       })
     }
 
@@ -253,6 +278,6 @@ export async function runAgentLoop(params: AgentRunParams) {
   }
 
   // Hit max iterations
-  sender.send('agent:error', { requestId, message: `Agent 已达到最大迭代次数 (${MAX_ITERATIONS})` })
+  sender.send('agent:error', { requestId, message: `Agent 已达到最大迭代次数 (${maxIterations})` })
   sender.send('agent:done', { requestId })
 }
