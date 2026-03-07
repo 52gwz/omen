@@ -31,6 +31,7 @@ interface AgentChatApi {
   stop(requestId: string): void
   confirmTool(requestId: string, toolCallId: string): void
   rejectTool(requestId: string, toolCallId: string): void
+  killCommand(toolCallId: string): void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
   onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string; autoApprove: boolean }) => void): () => void
@@ -66,13 +67,29 @@ interface ProjectApi {
   checkPath(folderPath: string): Promise<boolean>
 }
 
+interface StoredToolCall {
+  id: string
+  name: string
+  arguments: string
+  status: string
+  result?: string
+  screenshot?: string
+}
+
+interface StoredMessage {
+  role: string
+  content: string
+  reasoning?: string
+  toolCalls?: StoredToolCall[]
+}
+
 interface ConversationApi {
   list(): Promise<ConversationMeta[]>
   create(title: string): Promise<ConversationMeta>
   delete(convId: string): Promise<void>
   rename(convId: string, title: string): Promise<void>
-  getMessages(convId: string): Promise<{ role: string; content: string }[]>
-  saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void>
+  getMessages(convId: string): Promise<StoredMessage[]>
+  saveMessages(convId: string, messages: StoredMessage[]): Promise<void>
   setCwd(convId: string, cwd: string): Promise<void>
   getCwd(convId: string): Promise<string>
 }

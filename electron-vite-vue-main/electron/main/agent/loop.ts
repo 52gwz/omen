@@ -100,6 +100,12 @@ async function streamOnce(params: {
   let finishReason = 'stop'
   const toolCallAccum = new Map<number, ToolCall>()
 
+  function emitContent(text: string) {
+    if (!text) return
+    fullContent += text
+    sender.send('agent:stream-chunk', { requestId, delta: text })
+  }
+
   while (true) {
     if (signal?.aborted) break
     const { value, done } = await reader.read()
@@ -133,8 +139,7 @@ async function streamOnce(params: {
         }
 
         if (delta.content) {
-          fullContent += delta.content
-          sender.send('agent:stream-chunk', { requestId, delta: delta.content })
+          emitContent(delta.content)
         }
 
         if (delta.tool_calls) {
@@ -145,7 +150,7 @@ async function streamOnce(params: {
   }
 
   const toolCalls = Array.from(toolCallAccum.values())
-  return { content: fullContent, reasoning: fullReasoning, toolCalls, finishReason }
+  return { content: fullContent.trim(), reasoning: fullReasoning.trim(), toolCalls, finishReason }
 }
 
 const SAFE_TOOLS = new Set([
@@ -296,6 +301,7 @@ export async function runAgentLoop(params: AgentRunParams) {
 
       const execOptions: ToolExecOptions = {
         signal,
+        toolCallId: tc.id,
         onOutput: (chunk) => {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },

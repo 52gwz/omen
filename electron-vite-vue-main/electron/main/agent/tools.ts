@@ -20,6 +20,7 @@ export interface ToolResult {
 export interface ToolExecOptions {
   signal?: AbortSignal
   onOutput?: (chunk: string) => void
+  toolCallId?: string
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -229,8 +230,41 @@ export const toolDefinitions: ToolDefinition[] = [
 ]
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
-const DEFAULT_EXEC_TIMEOUT = 120_000 // 120s
 const MAX_OUTPUT_SIZE = MAX_FILE_SIZE * 2
+
+interface OutputLogEntry {
+  time: number
+  text: string
+}
+
+interface RunningProcess {
+  child: ChildProcess
+  killReason: string
+  command: string
+  startTime: number
+  outputLog: OutputLogEntry[]
+}
+
+const runningProcesses = new Map<string, RunningProcess>()
+
+export function killRunningCommand(toolCallId: string): boolean {
+  const proc = runningProcesses.get(toolCallId)
+  if (!proc) return false
+  proc.killReason = 'killed'
+  killProcessGroup(proc.child)
+  return true
+}
+
+export function getCommandLog(toolCallId: string): { command: string; startTime: number; elapsed: number; log: OutputLogEntry[] } | null {
+  const proc = runningProcesses.get(toolCallId)
+  if (!proc) return null
+  return {
+    command: proc.command,
+    startTime: proc.startTime,
+    elapsed: Date.now() - proc.startTime,
+    log: proc.outputLog,
+  }
+}
 
 function resolvePath(filePath: string, cwd: string): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(cwd, filePath)
@@ -238,19 +272,33 @@ function resolvePath(filePath: string, cwd: string): string {
 
 function killProcessGroup(child: ChildProcess) {
   if (!child.pid) return
-  try {
-    // kill 整个进程组（负 pid），避免孤儿进程
-    process.kill(-child.pid, 'SIGTERM')
-  } catch {
-    // 进程可能已退出，忽略
-    try { child.kill('SIGTERM') } catch {}
+  const pid = child.pid
+
+  function sendSignal(sig: NodeJS.Signals) {
+    try {
+      process.kill(-pid, sig)
+    } catch {
+      try { child.kill(sig) } catch {}
+    }
   }
+
+  sendSignal('SIGTERM')
+
+  // SIGTERM 可能被忽略，2s 后用 SIGKILL 强制终止
+  setTimeout(() => {
+    try {
+      process.kill(-pid, 0) // 检查进程是否还活着
+      sendSignal('SIGKILL')
+    } catch {
+      // 进程已退出，无需 SIGKILL
+    }
+  }, 2000)
 }
 
 async function execCommand(
   command: string,
   cwd: string,
-  options?: { signal?: AbortSignal; onOutput?: (chunk: string) => void },
+  options?: { signal?: AbortSignal; onOutput?: (chunk: string) => void; toolCallId?: string },
 ): Promise<string> {
   try {
     const stat = await fs.stat(cwd)
@@ -275,25 +323,36 @@ async function execCommand(
       detached: true,
     })
 
+    const proc: RunningProcess = {
+      child,
+      killReason: '',
+      command,
+      startTime: Date.now(),
+      outputLog: [],
+    }
+    if (options?.toolCallId) {
+      runningProcesses.set(options.toolCallId, proc)
+    }
+
     let output = ''
     let killed = false
-    let killReason = ''
 
     const append = (text: string) => {
       if (output.length < MAX_OUTPUT_SIZE) {
         output += text
       }
+      proc.outputLog.push({ time: Date.now(), text })
       options?.onOutput?.(text)
     }
 
     child.stdout?.on('data', (chunk: Buffer) => append(chunk.toString()))
-    child.stderr?.on('data', (chunk: Buffer) => append(`[stderr] ${chunk.toString()}`))
+    child.stderr?.on('data', (chunk: Buffer) => append(chunk.toString()))
 
     // 用户停止对话 → kill 整个进程组
     const onAbort = () => {
       if (killed) return
       killed = true
-      killReason = 'stopped'
+      proc.killReason = 'stopped'
       killProcessGroup(child)
     }
     if (options?.signal) {
@@ -304,22 +363,14 @@ async function execCommand(
       }
     }
 
-    // 超时保护
-    const timer = setTimeout(() => {
-      if (killed) return
-      killed = true
-      killReason = 'timeout'
-      killProcessGroup(child)
-    }, DEFAULT_EXEC_TIMEOUT)
-
     child.on('close', (code) => {
-      clearTimeout(timer)
       options?.signal?.removeEventListener('abort', onAbort)
+      if (options?.toolCallId) runningProcesses.delete(options.toolCallId)
 
-      if (killReason === 'stopped') {
+      if (proc.killReason === 'killed') {
+        append('\n[stopped] 用户已终止命令')
+      } else if (proc.killReason === 'stopped') {
         append('\n[stopped] 用户已停止，命令已终止')
-      } else if (killReason === 'timeout') {
-        append(`\n[timeout] 命令执行超过 ${DEFAULT_EXEC_TIMEOUT / 1000}s 已终止`)
       } else if (code !== 0 && code !== null) {
         append(`\n[exit code: ${code}]`)
       }
@@ -327,8 +378,8 @@ async function execCommand(
     })
 
     child.on('error', (err) => {
-      clearTimeout(timer)
       options?.signal?.removeEventListener('abort', onAbort)
+      if (options?.toolCallId) runningProcesses.delete(options.toolCallId)
       resolve(output + `\n[error] ${err.message}`)
     })
   })
@@ -488,7 +539,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
   try {
     switch (name) {
       case 'exec_command':
-        return text(await execCommand(args.command as string, cwd, options))
+        return text(await execCommand(args.command as string, cwd, {
+          signal: options?.signal,
+          onOutput: options?.onOutput,
+          toolCallId: options?.toolCallId,
+        }))
       case 'read_file':
         return text(await readFile(args.path as string, cwd))
       case 'write_file':

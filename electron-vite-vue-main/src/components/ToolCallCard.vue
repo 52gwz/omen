@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { marked } from 'marked'
 
 const props = defineProps<{
   name: string
@@ -13,9 +14,67 @@ const props = defineProps<{
 const emit = defineEmits<{
   confirm: []
   reject: []
+  kill: []
 }>()
 
-const resultExpanded = ref(false)
+const expanded = ref(false)
+const userToggled = ref(false)
+const elapsedSeconds = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+function startTimer() {
+  stopTimer()
+  elapsedSeconds.value = 0
+  userToggled.value = false
+  elapsedTimer = setInterval(() => {
+    elapsedSeconds.value++
+    if (elapsedSeconds.value >= 1 && !expanded.value && !userToggled.value) {
+      expanded.value = true
+    }
+  }, 1000)
+}
+
+function stopTimer() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer)
+    elapsedTimer = null
+  }
+}
+
+const elapsedDisplay = computed(() => {
+  const s = elapsedSeconds.value
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  return `${m}m${s % 60}s`
+})
+
+watch(() => props.status, (s) => {
+  if (s === 'running') startTimer()
+  if (s === 'completed' || s === 'error' || s === 'rejected') stopTimer()
+}, { immediate: true })
+
+onUnmounted(stopTimer)
+
+// Shell-picker keyboard navigation
+const pickerSelected = ref<'confirm' | 'reject'>('confirm')
+
+function onPickerKey(e: KeyboardEvent) {
+  if (props.status !== 'pending') return
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    pickerSelected.value = pickerSelected.value === 'confirm' ? 'reject' : 'confirm'
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    pickerSelected.value === 'confirm' ? emit('confirm') : emit('reject')
+  }
+}
+
+watch(() => props.status, (s) => {
+  if (s === 'pending') pickerSelected.value = 'confirm'
+})
+
+onMounted(() => window.addEventListener('keydown', onPickerKey))
+onUnmounted(() => window.removeEventListener('keydown', onPickerKey))
 
 const toolLabel: Record<string, string> = {
   exec_command: '执行命令',
@@ -34,19 +93,27 @@ const toolLabel: Record<string, string> = {
   browser_close: '关闭浏览器',
 }
 
-const screenshotExpanded = ref(false)
-
-const statusLabel: Record<string, string> = {
-  pending: '等待确认',
-  confirmed: '已确认',
-  rejected: '已拒绝',
-  running: '执行中...',
-  completed: '已完成',
-  error: '出错',
-}
-
 const displayName = computed(() => toolLabel[props.name] || props.name)
-const displayStatus = computed(() => statusLabel[props.status] || props.status)
+
+const argSummary = computed(() => {
+  try {
+    const obj = JSON.parse(props.arguments)
+    if (props.name === 'exec_command' && obj.command) return obj.command
+    if (props.name === 'read_file' && obj.path) return obj.path
+    if (props.name === 'write_file' && obj.path) return obj.path
+    if (props.name === 'edit_file' && obj.path) return obj.path
+    if (props.name === 'list_directory') return obj.path || '.'
+    if (props.name === 'grep_search' && obj.pattern) return obj.pattern
+    if (props.name === 'browser_navigate' && obj.url) return obj.url
+    if (props.name === 'browser_evaluate' && obj.script) return obj.script
+    if (props.name === 'browser_click' && obj.selector) return obj.selector
+    if (props.name === 'browser_type' && obj.text) return obj.text
+    const first = Object.values(obj)[0]
+    return typeof first === 'string' ? first : JSON.stringify(first)
+  } catch {
+    return props.arguments
+  }
+})
 
 const parsedArgs = computed(() => {
   try {
@@ -59,16 +126,31 @@ const parsedArgs = computed(() => {
   }
 })
 
-const truncatedResult = computed(() => {
+function processCarriageReturns(text: string): string {
+  return text.split('\n').map(line => {
+    if (!line.includes('\r')) return line
+    const parts = line.split('\r')
+    let result = ''
+    for (const part of parts) {
+      if (!part) continue
+      if (part.length >= result.length) {
+        result = part
+      } else {
+        result = part + result.slice(part.length)
+      }
+    }
+    return result
+  }).join('\n')
+}
+
+const displayResult = computed(() => {
   if (!props.result) return ''
-  if (props.result.length > 2000) return props.result.slice(0, 2000) + '\n... (已截断)'
-  return props.result
+  return processCarriageReturns(props.result)
 })
 
-const truncatedStreamOutput = computed(() => {
+const displayStreamOutput = computed(() => {
   if (!props.streamOutput) return ''
-  if (props.streamOutput.length > 4000) return '... (前面输出已截断)\n' + props.streamOutput.slice(-3000)
-  return props.streamOutput
+  return processCarriageReturns(props.streamOutput)
 })
 
 const streamOutputEl = ref<HTMLElement>()
@@ -80,137 +162,325 @@ watch(() => props.streamOutput, () => {
     }
   })
 })
+
+const statusIcon = computed(() => {
+  switch (props.status) {
+    case 'pending': return 'pending'
+    case 'running': return 'running'
+    case 'completed': return 'completed'
+    case 'rejected': return 'rejected'
+    case 'error': return 'error'
+    default: return 'completed'
+  }
+})
+
+function renderMarkdown(raw: string): string {
+  return marked.parse(raw, { async: false, breaks: true, gfm: true }) as string
+}
+
+const isExecCommand = computed(() => props.name === 'exec_command')
+
+const execCmd = computed(() => {
+  if (!isExecCommand.value) return ''
+  try {
+    return JSON.parse(props.arguments).command || ''
+  } catch {
+    return props.arguments
+  }
+})
+
+const execExitCode = computed(() => {
+  if (!props.result) return null
+  const m = props.result.match(/\[exit code:\s*(\d+)\]/)
+  return m ? Number(m[1]) : null
+})
+
+const execOutput = computed(() => {
+  if (!props.result) return ''
+  const cleaned = props.result
+    .replace(/\n?\[exit code:\s*\d+\]\s*$/, '')
+    .replace(/\n?\[timeout\].*$/, '')
+    .replace(/\n?\[stopped\].*$/, '')
+    .trim()
+  return processCarriageReturns(cleaned)
+})
 </script>
 
 <template>
-  <div class="tool-card" :class="status">
+  <div class="tool-line" :class="status">
     <div class="tool-header">
-      <div class="tool-icon">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-        </svg>
-      </div>
-      <span class="tool-name">{{ displayName }}</span>
-      <span class="tool-status-badge" :class="status">{{ displayStatus }}</span>
-    </div>
-
-    <div class="tool-args">
-      <pre>{{ parsedArgs }}</pre>
-    </div>
-
-    <div v-if="status === 'pending'" class="tool-actions">
-      <button class="action-btn confirm" @click="emit('confirm')">确认执行</button>
-      <button class="action-btn reject" @click="emit('reject')">拒绝</button>
-    </div>
-
-    <div v-if="status === 'running'" class="tool-running">
-      <div class="tool-running-header">
-        <span class="spinner"></span>
-        <span>执行中...</span>
-      </div>
-      <div v-if="streamOutput" ref="streamOutputEl" class="stream-output-panel">
-        <pre class="stream-output-content">{{ truncatedStreamOutput }}</pre>
-      </div>
-    </div>
-
-    <!-- Screenshot preview -->
-    <div v-if="screenshot && (status === 'completed')" class="screenshot-section">
-      <button class="result-toggle" @click="screenshotExpanded = !screenshotExpanded">
-        查看截图
+      <div class="tool-summary" @click="status !== 'pending' && (userToggled = true, expanded = !expanded)">
+        <span class="tool-name">{{ displayName }}</span>
+        <span class="arg-hint">{{ argSummary }}</span>
+        <span v-if="elapsedSeconds > 0" class="elapsed-time">(已运行 {{ elapsedDisplay }})</span>
         <svg
-          class="result-chevron"
-          :class="{ expanded: screenshotExpanded }"
-          width="14" height="14" viewBox="0 0 24 24"
+          v-if="status !== 'pending'"
+          class="chevron"
+          :class="{ expanded }"
+          width="12" height="12" viewBox="0 0 24 24"
           fill="none" stroke="currentColor" stroke-width="2.5"
           stroke-linecap="round" stroke-linejoin="round"
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-      </button>
-      <div v-if="screenshotExpanded" class="screenshot-panel">
+      </div>
+    </div>
+
+    <!-- Pending: shell-style picker -->
+    <div v-if="status === 'pending'" class="shell-picker">
+      <div
+        class="picker-option confirm-option"
+        :class="{ selected: pickerSelected === 'confirm' }"
+        @click.stop="emit('confirm')"
+      >
+        <span class="picker-cursor">❯</span>
+        <span class="picker-label">确认</span>
+      </div>
+      <div
+        class="picker-option reject-option"
+        :class="{ selected: pickerSelected === 'reject' }"
+        @click.stop="emit('reject')"
+      >
+        <span class="picker-cursor">❯</span>
+        <span class="picker-label">拒绝</span>
+      </div>
+    </div>
+
+    <!-- exec_command: shell panel -->
+    <Transition name="expand">
+    <div v-show="expanded && isExecCommand" class="tool-detail">
+      <div class="shell-panel">
+        <div class="shell-header">
+          <div class="shell-title">
+            <svg class="shell-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <span class="shell-label">shell</span>
+          </div>
+          <div class="shell-header-right"></div>
+        </div>
+        <div class="shell-body">
+          <pre class="shell-cmd"><span class="shell-prompt">$ </span>{{ execCmd }}</pre>
+          <div v-if="status === 'running' && streamOutput" ref="streamOutputEl" class="shell-output streaming">
+            <pre>{{ displayStreamOutput }}</pre>
+          </div>
+          <div v-else-if="status === 'running'" class="shell-output"></div>
+          <div v-else-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="shell-output">
+            <pre v-if="execOutput">{{ execOutput }}</pre>
+            <span v-else class="shell-empty">无输出</span>
+          </div>
+        </div>
+        <div v-if="status === 'running' || (execExitCode !== null && (status === 'completed' || status === 'error'))" class="shell-footer">
+          <span v-if="execExitCode !== null && (status === 'completed' || status === 'error')"
+                class="shell-exit-code" :class="execExitCode === 0 ? 'exit-ok' : 'exit-err'">
+            exit {{ execExitCode }}
+          </span>
+          <button v-if="status === 'running'" class="shell-kill-btn" @click.stop="emit('kill'); expanded = false" title="终止命令">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+            </svg>
+            终止
+          </button>
+        </div>
+      </div>
+    </div>
+    </Transition>
+
+    <!-- Other tools: generic detail -->
+    <Transition name="expand">
+    <div v-show="expanded && !isExecCommand" class="tool-detail">
+      <div class="tool-args">
+        <pre>{{ parsedArgs }}</pre>
+      </div>
+
+      <div v-if="status === 'running' && streamOutput" ref="streamOutputEl" class="stream-output-panel">
+        <pre class="stream-output-content">{{ displayStreamOutput }}</pre>
+      </div>
+
+      <div v-if="screenshot && status === 'completed'" class="screenshot-panel">
         <img :src="`data:image/png;base64,${screenshot}`" class="screenshot-img" alt="页面截图" />
       </div>
-    </div>
 
-    <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="tool-result-section">
-      <button class="result-toggle" @click="resultExpanded = !resultExpanded">
-        {{ status === 'rejected' ? '拒绝信息' : '执行结果' }}
-        <svg
-          class="result-chevron"
-          :class="{ expanded: resultExpanded }"
-          width="14" height="14" viewBox="0 0 24 24"
-          fill="none" stroke="currentColor" stroke-width="2.5"
-          stroke-linecap="round" stroke-linejoin="round"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      <div v-if="resultExpanded" class="result-panel">
-        <pre class="result-content">{{ truncatedResult }}</pre>
+      <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="result-panel">
+        <pre class="result-content">{{ displayResult }}</pre>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
 <style scoped>
-.tool-card {
-  border: 1px solid var(--c-surface1);
-  border-radius: 10px;
-  padding: 12px;
-  margin: 8px 0;
-  background: var(--c-surface-alt);
+.tool-line {
+  border-radius: 8px;
+  font-size: 0.82rem;
 }
 
-.tool-card.pending { border-color: var(--c-yellow); }
-.tool-card.running { border-color: var(--c-blue); }
-.tool-card.completed { border-color: var(--c-green); }
-.tool-card.rejected { border-color: var(--c-red); }
-.tool-card.error { border-color: var(--c-red); }
+.tool-line.pending {
+  border: 1px solid var(--c-surface2);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
 
 .tool-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  width: fit-content;
+  max-width: 100%;
   margin-bottom: 8px;
 }
 
-.tool-icon {
-  color: var(--c-overlay1);
+.tool-summary {
   display: flex;
-  align-items: center;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+  transition: color 0.15s;
 }
 
-.tool-name {
-  font-size: 0.85rem;
-  font-weight: 600;
+.tool-summary:hover {
   color: var(--c-text);
 }
 
-.tool-status-badge {
-  margin-left: auto;
-  font-size: 0.72rem;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 500;
+.tool-summary:hover .tool-name {
+  color: var(--c-text);
 }
 
-.tool-status-badge.pending { background: var(--c-badge-pending-bg); color: var(--c-badge-pending-text); }
-.tool-status-badge.running { background: var(--c-badge-running-bg); color: var(--c-badge-running-text); }
-.tool-status-badge.completed { background: var(--c-badge-completed-bg); color: var(--c-badge-completed-text); }
-.tool-status-badge.rejected { background: var(--c-badge-error-bg); color: var(--c-badge-error-text); }
-.tool-status-badge.error { background: var(--c-badge-error-bg); color: var(--c-badge-error-text); }
-.tool-status-badge.confirmed { background: var(--c-badge-completed-bg); color: var(--c-badge-completed-text); }
+.tool-summary:hover .arg-hint {
+  color: var(--c-subtext0);
+}
+
+.chevron {
+  flex-shrink: 0;
+  color: var(--c-overlay0);
+  opacity: 0;
+  transition: transform 0.2s ease, opacity 0.15s;
+  align-self: center;
+}
+
+.tool-summary:hover .chevron,
+.chevron.expanded {
+  opacity: 1;
+}
+
+.chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.elapsed-time {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--c-overlay0);
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  white-space: nowrap;
+}
+
+
+
+.tool-name {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--c-subtext1);
+  white-space: nowrap;
+}
+
+.arg-hint {
+  color: var(--c-overlay1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+}
+
+.shell-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.8rem;
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+  width: 100%;
+  transition: background 0.12s;
+}
+
+.picker-cursor {
+  font-size: 0.7rem;
+  opacity: 0;
+  transition: opacity 0.12s;
+  color: var(--c-blue);
+}
+
+.confirm-option .picker-cursor { color: var(--c-blue); }
+.reject-option  .picker-cursor { color: #ff5f57; }
+
+.picker-option.selected,
+.picker-option:hover {
+  background: var(--c-surface0);
+  border-radius: 999px;
+}
+
+.picker-option.selected .picker-cursor {
+  opacity: 1;
+}
+
+.picker-label {
+  font-weight: 500;
+  color: var(--c-subtext1);
+  transition: color 0.12s;
+}
+
+.confirm-option.selected .picker-label { color: var(--c-blue); }
+
+.reject-option.selected .picker-label { color: #ff5f57; }
+
+
+.expand-enter-active,
+.expand-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  transform-origin: top;
+  overflow: hidden;
+}
+
+.expand-enter-from,
+.expand-leave-to {
+  opacity: 0;
+  transform: scaleY(0.92) translateY(-4px);
+}
+
+.expand-enter-to,
+.expand-leave-from {
+  opacity: 1;
+  transform: scaleY(1) translateY(0);
+}
+
+.tool-detail {
+  padding: 0 0 6px 0;
+}
 
 .tool-args {
   background: var(--c-base);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-bottom: 8px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
 }
 
 .tool-args pre {
   margin: 0;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   color: var(--c-subtext1);
   white-space: pre-wrap;
   word-break: break-all;
@@ -218,58 +488,18 @@ watch(() => props.streamOutput, () => {
   line-height: 1.5;
 }
 
-.tool-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.action-btn {
-  flex: 1;
-  padding: 7px 0;
-  border-radius: 8px;
-  border: none;
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: opacity 0.2s;
-}
-
-.action-btn:hover { opacity: 0.85; }
-
-.action-btn.confirm {
-  background: var(--c-confirm-btn-bg);
-  color: var(--c-confirm-btn-text);
-}
-
-.action-btn.reject {
-  background: var(--c-surface1);
-  color: var(--c-text);
-}
-
-.tool-running {
-  font-size: 0.82rem;
-  color: var(--c-blue);
-}
-
-.tool-running-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 .stream-output-panel {
-  margin-top: 8px;
   background: var(--c-base);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 6px;
+  padding: 6px 10px;
   max-height: 200px;
   overflow-y: auto;
+  margin-bottom: 4px;
 }
 
 .stream-output-content {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   color: var(--c-subtext0);
   white-space: pre-wrap;
   word-break: break-all;
@@ -277,56 +507,34 @@ watch(() => props.streamOutput, () => {
   line-height: 1.5;
 }
 
-.spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--c-surface1);
-  border-top-color: var(--c-blue);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+.screenshot-panel {
+  background: var(--c-base);
+  border-radius: 6px;
+  padding: 6px;
+  overflow: hidden;
+  margin-bottom: 4px;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.result-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  border: none;
-  color: var(--c-overlay1);
-  font-size: 0.82rem;
+.screenshot-img {
+  width: 100%;
+  border-radius: 4px;
+  display: block;
   cursor: pointer;
-  padding: 0;
-  user-select: none;
-  font-family: inherit;
-  transition: color 0.2s;
+  transition: opacity 0.2s;
 }
-
-.result-toggle:hover { color: var(--c-subtext1); }
-
-.result-chevron {
-  transition: transform 0.25s ease;
-}
-
-.result-chevron.expanded {
-  transform: rotate(180deg);
-}
+.screenshot-img:hover { opacity: 0.9; }
 
 .result-panel {
-  margin-top: 8px;
   background: var(--c-base);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 6px;
+  padding: 6px 10px;
   max-height: 300px;
   overflow-y: auto;
 }
 
 .result-content {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   color: var(--c-subtext0);
   white-space: pre-wrap;
   word-break: break-all;
@@ -334,27 +542,222 @@ watch(() => props.streamOutput, () => {
   line-height: 1.5;
 }
 
-.screenshot-section {
-  margin-bottom: 4px;
-}
-
-.screenshot-panel {
-  margin-top: 8px;
-  background: var(--c-base);
+/* ---- Shell Panel ---- */
+.shell-panel {
   border-radius: 8px;
-  padding: 8px;
   overflow: hidden;
+  background: #f4f4f5;
+  border: 1px solid #e2e2e4;
+  width: 580px;
+  max-width: 100%;
 }
 
-.screenshot-img {
-  width: 100%;
-  border-radius: 6px;
-  display: block;
+.shell-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #ebebed;
+  border-bottom: 1px solid #dddde0;
+}
+
+.shell-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.shell-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.shell-label {
+  font-size: 0.71rem;
+  color: #888;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  user-select: none;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+
+.shell-header-right {
+  width: 0;
+}
+
+.shell-body {
+  padding: 10px 14px 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.shell-body::-webkit-scrollbar {
+  width: 4px;
+}
+.shell-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.shell-body::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
+}
+
+.shell-cmd {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.8rem;
+  color: #2c2c2e;
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.shell-prompt {
+  color: #1e7e45;
+  font-weight: 600;
+}
+
+.shell-output {
+  margin-top: 4px;
+}
+
+.shell-output pre {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  color: #555;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.shell-output.streaming {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.shell-output.streaming::-webkit-scrollbar {
+  width: 4px;
+}
+.shell-output.streaming::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
+}
+
+.shell-empty {
+  color: #aaa;
+  font-size: 0.78rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.shell-cursor {
+  color: #1e7e45;
+  animation: blink 1s step-end infinite;
+}
+
+.shell-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 5px 10px 7px;
+  background: #f4f4f5;
+  min-height: 28px;
+}
+
+.shell-kill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 4px;
+  border: 1px solid #e05c57;
+  background: transparent;
+  color: #e05c57;
+  font-size: 0.7rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
 }
 
-.screenshot-img:hover {
-  opacity: 0.9;
+.shell-kill-btn:hover {
+  background: #e05c57;
+  color: #fff;
+}
+
+.shell-exit-code {
+  font-size: 0.7rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.shell-exit-code.exit-ok   { color: #1e7e45; }
+.shell-exit-code.exit-err  { color: #e05c57; }
+
+:root[data-theme="dark"] .shell-panel {
+  background: #1e1e20;
+  border-color: #3a3a3c;
+}
+
+:root[data-theme="dark"] .shell-header {
+  background: #2a2a2c;
+  border-bottom-color: #3a3a3c;
+}
+
+:root[data-theme="dark"] .shell-icon {
+  color: #666;
+}
+
+:root[data-theme="dark"] .shell-label {
+  color: #666;
+}
+
+:root[data-theme="dark"] .shell-body::-webkit-scrollbar-thumb {
+  background: #444;
+}
+
+:root[data-theme="dark"] .shell-cmd {
+  color: #e0e0e0;
+}
+
+:root[data-theme="dark"] .shell-prompt {
+  color: #4caf7d;
+}
+
+:root[data-theme="dark"] .shell-output pre {
+  color: #999;
+}
+
+:root[data-theme="dark"] .shell-output.streaming::-webkit-scrollbar-thumb {
+  background: #444;
+}
+
+:root[data-theme="dark"] .shell-empty {
+  color: #555;
+}
+
+:root[data-theme="dark"] .shell-cursor {
+  color: #4caf7d;
+}
+
+:root[data-theme="dark"] .shell-footer {
+  background: #1e1e20;
+}
+
+:root[data-theme="dark"] .shell-kill-btn {
+  border-color: #c0534f;
+  color: #c0534f;
+}
+
+:root[data-theme="dark"] .shell-kill-btn:hover {
+  background: #c0534f;
+  color: #fff;
+}
+
+:root[data-theme="dark"] .shell-exit-code.exit-ok  { color: #4caf7d; }
+:root[data-theme="dark"] .shell-exit-code.exit-err { color: #c0534f; }
+
+@keyframes blink {
+  50% { opacity: 0; }
 }
 </style>

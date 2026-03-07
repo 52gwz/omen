@@ -76,6 +76,9 @@ contextBridge.exposeInMainWorld('agentChat', {
   rejectTool(requestId: string, toolCallId: string) {
     ipcRenderer.send('agent:tool-reject', { requestId, toolCallId })
   },
+  killCommand(toolCallId: string) {
+    ipcRenderer.send('agent:kill-command', { toolCallId })
+  },
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:stream-chunk', handler)
@@ -159,10 +162,10 @@ contextBridge.exposeInMainWorld('conversationApi', {
   rename(convId: string, title: string): Promise<void> {
     return ipcRenderer.invoke('conversation:rename', convId, title)
   },
-  getMessages(convId: string): Promise<{ role: string; content: string }[]> {
+  getMessages(convId: string): Promise<any[]> {
     return ipcRenderer.invoke('conversation:get-messages', convId)
   },
-  saveMessages(convId: string, messages: { role: string; content: string }[]): Promise<void> {
+  saveMessages(convId: string, messages: any[]): Promise<void> {
     return ipcRenderer.invoke('conversation:save-messages', convId, messages)
   },
   setCwd(convId: string, cwd: string): Promise<void> {

@@ -25,9 +25,20 @@ interface ConversationMeta {
   cwd?: string
 }
 
+interface StoredToolCall {
+  id: string
+  name: string
+  arguments: string
+  status: string
+  result?: string
+  screenshot?: string
+}
+
 interface StoredMessage {
   role: string
   content: string
+  reasoning?: string
+  toolCalls?: StoredToolCall[]
 }
 
 type StoreSchema = {
@@ -317,9 +328,15 @@ ipcMain.on('agent:stop', (_, data: { requestId: string }) => {
   }
 })
 
+ipcMain.on('agent:kill-command', (_, data: { toolCallId: string }) => {
+  const killed = killRunningCommand(data.toolCallId)
+  console.log(`[Agent] kill command ${data.toolCallId.slice(0, 8)}: ${killed ? 'ok' : 'not found'}`)
+})
+
 // ---- Agent IPC Handlers ----
 
 import { runAgentLoop } from './agent/loop'
+import { killRunningCommand } from './agent/tools'
 import { browserManager } from './agent/browser'
 
 ipcMain.on('agent:start', async (event, payload: {
