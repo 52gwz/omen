@@ -1,62 +1,133 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 
 const emit = defineEmits<{ close: [] }>()
 
-const apiKey = ref('')
-const baseURL = ref('https://api.openai.com/v1')
-const defaultModel = ref('gpt-4o-mini')
-const maxIterations = ref(20)
+const providers = reactive<ModelProvider[]>([])
+const activeProviderId = ref('')
+const activeModel = ref('')
+const maxIterations = ref(0)
 const saving = ref(false)
 const message = ref('')
+const expandedId = ref<string | null>(null)
 
-const fetchedModels = ref<string[]>([])
-const modelsFetching = ref(false)
-const modelsError = ref('')
+const fetchingMap = reactive<Record<string, boolean>>({})
+const fetchErrorMap = reactive<Record<string, string>>({})
+const newModelInput = reactive<Record<string, string>>({})
 
 onMounted(async () => {
   try {
     const config = await window.aiChat.getConfig()
-    apiKey.value = config.apiKey
-    baseURL.value = config.baseURL
-    defaultModel.value = config.defaultModel
-    maxIterations.value = config.maxIterations || 20
+    providers.length = 0
+    for (const p of config.providers) {
+      providers.push({ ...p, models: [...p.models] })
+    }
+    activeProviderId.value = config.activeProviderId
+    activeModel.value = config.activeModel
+    maxIterations.value = config.maxIterations ?? 0
+    if (providers.length === 1) expandedId.value = providers[0].id
   } catch {}
 })
 
-async function fetchModels() {
-  if (!apiKey.value) {
-    modelsError.value = '请先填写 API Key'
-    return
-  }
-  modelsFetching.value = true
-  modelsError.value = ''
-  fetchedModels.value = []
-  try {
-    const list = await window.aiChat.getModels()
-    fetchedModels.value = list
-    if (!list.length) {
-      modelsError.value = '该接口未返回模型列表，请手动输入模型名称'
-    }
-  } catch {
-    modelsError.value = '无法获取模型列表，请手动输入模型名称'
-  } finally {
-    modelsFetching.value = false
+function addProvider() {
+  const id = crypto.randomUUID()
+  providers.push({
+    id,
+    name: '',
+    apiKey: '',
+    baseURL: 'https://api.openai.com/v1',
+    models: [],
+  })
+  expandedId.value = id
+}
+
+function removeProvider(idx: number) {
+  const removed = providers[idx]
+  providers.splice(idx, 1)
+  if (expandedId.value === removed.id) expandedId.value = null
+  if (activeProviderId.value === removed.id) {
+    activeProviderId.value = providers[0]?.id || ''
+    activeModel.value = providers[0]?.models[0] || ''
   }
 }
 
-function selectModel(model: string) {
-  defaultModel.value = model
+function toggleProvider(id: string) {
+  expandedId.value = expandedId.value === id ? null : id
+}
+
+async function fetchModelsFor(provider: ModelProvider) {
+  if (!provider.apiKey) {
+    fetchErrorMap[provider.id] = '请先填写 API Key'
+    return
+  }
+  fetchingMap[provider.id] = true
+  fetchErrorMap[provider.id] = ''
+  try {
+    const list = await window.aiChat.getModels({
+      apiKey: provider.apiKey,
+      baseURL: provider.baseURL,
+    })
+    if (list.length) {
+      const existing = new Set(provider.models)
+      for (const m of list) {
+        if (!existing.has(m)) provider.models.push(m)
+      }
+      autoActivateIfNeeded(provider)
+    } else {
+      fetchErrorMap[provider.id] = '该接口未返回模型列表，请手动添加'
+    }
+  } catch {
+    fetchErrorMap[provider.id] = '获取模型列表失败'
+  } finally {
+    fetchingMap[provider.id] = false
+  }
+}
+
+function addModelManual(provider: ModelProvider) {
+  const name = (newModelInput[provider.id] || '').trim()
+  if (!name) return
+  if (!provider.models.includes(name)) provider.models.push(name)
+  newModelInput[provider.id] = ''
+  autoActivateIfNeeded(provider)
+}
+
+function autoActivateIfNeeded(provider: ModelProvider) {
+  if (!activeProviderId.value && provider.models.length) {
+    activeProviderId.value = provider.id
+    activeModel.value = provider.models[0]
+  }
+  if (activeProviderId.value === provider.id && !activeModel.value && provider.models.length) {
+    activeModel.value = provider.models[0]
+  }
+}
+
+function removeModel(provider: ModelProvider, model: string) {
+  const idx = provider.models.indexOf(model)
+  if (idx >= 0) provider.models.splice(idx, 1)
 }
 
 async function save() {
   saving.value = true
   message.value = ''
+
+  // Auto-select first provider+model if nothing is active
+  if (providers.length) {
+    const activeValid = providers.some(p => p.id === activeProviderId.value)
+    if (!activeValid) {
+      activeProviderId.value = providers[0].id
+      activeModel.value = providers[0].models[0] || ''
+    }
+    if (!activeModel.value) {
+      const ap = providers.find(p => p.id === activeProviderId.value)
+      if (ap?.models.length) activeModel.value = ap.models[0]
+    }
+  }
+
   try {
     await window.aiChat.saveConfig({
-      apiKey: apiKey.value,
-      baseURL: baseURL.value,
-      defaultModel: defaultModel.value,
+      providers: providers.map(p => ({ ...p, models: [...p.models] })),
+      activeProviderId: activeProviderId.value,
+      activeModel: activeModel.value,
       maxIterations: maxIterations.value,
     })
     message.value = '保存成功'
@@ -78,57 +149,93 @@ async function save() {
       </div>
 
       <div class="settings-body">
-        <label>
-          <span>API Key</span>
-          <input v-model="apiKey" type="password" placeholder="sk-..." />
-        </label>
+        <div class="section-label">模型供应商</div>
 
-        <label>
-          <span>Base URL</span>
-          <input v-model="baseURL" type="text" placeholder="https://api.openai.com/v1" />
-        </label>
-
-        <div class="model-section">
-          <span class="field-label">模型</span>
-          <div class="model-input-row">
-            <input
-              v-model="defaultModel"
-              type="text"
-              class="model-input"
-              placeholder="输入模型名称，如 gpt-4o-mini"
-            />
-            <button
-              class="fetch-btn"
-              :disabled="modelsFetching || !apiKey"
-              @click="fetchModels"
-            >
-              {{ modelsFetching ? '获取中...' : '获取列表' }}
-            </button>
+        <div v-for="(p, idx) in providers" :key="p.id" class="provider-card">
+          <div class="provider-card-header" @click="toggleProvider(p.id)">
+            <span class="provider-name">{{ p.name || '未命名供应商' }}</span>
+            <div class="provider-header-right">
+              <span v-if="p.models.length" class="model-count">{{ p.models.length }} 个模型</span>
+              <button class="icon-btn" @click.stop="removeProvider(idx)" title="删除此供应商">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />
+                </svg>
+              </button>
+              <svg
+                class="expand-chevron"
+                :class="{ expanded: expandedId === p.id }"
+                width="14" height="14" viewBox="0 0 24 24"
+                fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </div>
           </div>
 
-          <p v-if="modelsError" class="models-hint">{{ modelsError }}</p>
+          <div v-if="expandedId === p.id" class="provider-card-body">
+            <label>
+              <span>名称</span>
+              <input v-model="p.name" type="text" placeholder="如 OpenAI、DeepSeek、Ollama" />
+            </label>
+            <label>
+              <span>API Key</span>
+              <input v-model="p.apiKey" type="password" placeholder="sk-..." />
+            </label>
+            <label>
+              <span>Base URL</span>
+              <input v-model="p.baseURL" type="text" placeholder="https://api.openai.com/v1" />
+            </label>
 
-          <div v-if="fetchedModels.length" class="models-list">
-            <button
-              v-for="m in fetchedModels"
-              :key="m"
-              class="model-item"
-              :class="{ active: m === defaultModel }"
-              @click="selectModel(m)"
-            >
-              {{ m }}
-            </button>
+            <div class="models-section">
+              <span class="field-label">模型列表</span>
+              <div class="model-input-row">
+                <input
+                  v-model="newModelInput[p.id]"
+                  type="text"
+                  class="model-input"
+                  placeholder="输入模型名称"
+                  @keydown.enter="addModelManual(p)"
+                />
+                <button class="small-btn" @click="addModelManual(p)">添加</button>
+                <button
+                  class="small-btn fetch-btn"
+                  :disabled="fetchingMap[p.id] || !p.apiKey"
+                  @click="fetchModelsFor(p)"
+                >
+                  {{ fetchingMap[p.id] ? '获取中...' : '获取列表' }}
+                </button>
+              </div>
+              <p v-if="fetchErrorMap[p.id]" class="fetch-hint">{{ fetchErrorMap[p.id] }}</p>
+              <div v-if="p.models.length" class="models-tags">
+                <span v-for="m in p.models" :key="m" class="model-tag">
+                  {{ m }}
+                  <button class="tag-remove" @click="removeModel(p, m)">×</button>
+                </span>
+              </div>
+              <p v-else class="no-models-hint">暂无模型，请手动添加或点击「获取列表」</p>
+            </div>
           </div>
         </div>
 
+        <button class="add-provider-btn" @click="addProvider">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          添加供应商
+        </button>
+
+        <div class="section-divider"></div>
+
         <label>
-          <span>Agent 最大迭代次数</span>
-          <input v-model.number="maxIterations" type="number" min="1" max="200" placeholder="20" />
+          <span>Agent 最大迭代次数 (0 = 无限制)</span>
+          <input v-model.number="maxIterations" type="number" min="0" max="200" placeholder="0" />
         </label>
+      </div>
 
-        <p v-if="message" class="settings-message">{{ message }}</p>
-
-        <button class="save-btn" :disabled="saving || !apiKey" @click="save">
+      <div class="settings-footer">
+        <p v-if="message" class="settings-message" :class="{ error: message.startsWith('保存失败') }">{{ message }}</p>
+        <button class="save-btn" :disabled="saving" @click="save">
           {{ saving ? '保存中...' : '保存' }}
         </button>
       </div>
@@ -150,9 +257,9 @@ async function save() {
 .settings-panel {
   background: var(--c-base);
   border-radius: 12px;
-  width: 420px;
-  max-width: 90vw;
-  max-height: 85vh;
+  width: 500px;
+  max-width: 92vw;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 8px 32px var(--c-shadow-heavy);
@@ -192,23 +299,109 @@ async function save() {
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
   overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.section-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--c-subtext0);
+  margin-bottom: 2px;
+}
+
+/* Provider card */
+.provider-card {
+  border: 1px solid var(--c-surface1);
+  border-radius: 10px;
+  transition: border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.provider-card:hover {
+  border-color: var(--c-surface2);
+}
+
+.provider-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.provider-card-header:hover {
+  background: var(--c-surface0);
+}
+
+.provider-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--c-text);
+}
+
+.provider-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-count {
+  font-size: 0.72rem;
+  color: var(--c-overlay1);
+  background: var(--c-surface0);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.icon-btn:hover {
+  color: var(--c-red, #e64553);
+  background: var(--c-surface0);
+}
+
+.expand-chevron {
+  color: var(--c-overlay0);
+  transition: transform 0.25s ease;
+  flex-shrink: 0;
+}
+
+.expand-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.provider-card-body {
+  padding: 4px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--c-surface0);
 }
 
 .settings-body label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
-.settings-body label span {
-  font-size: 0.85rem;
-  color: var(--c-subtext0);
-}
-
+.settings-body label span,
 .field-label {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--c-subtext0);
 }
 
@@ -216,18 +409,20 @@ async function save() {
   background: var(--c-surface0);
   border: 1px solid var(--c-surface1);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   color: var(--c-text);
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   outline: none;
   transition: border-color 0.2s;
+  font-family: inherit;
 }
 
 .settings-body input:focus {
   border-color: var(--c-blue);
 }
 
-.model-section {
+/* Models section */
+.models-section {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -235,87 +430,136 @@ async function save() {
 
 .model-input-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .model-input {
   flex: 1;
+  min-width: 0;
+}
+
+.small-btn {
   background: var(--c-surface0);
   border: 1px solid var(--c-surface1);
   border-radius: 8px;
-  padding: 10px 12px;
-  color: var(--c-text);
-  font-size: 0.9rem;
-  outline: none;
-  transition: border-color 0.2s;
-}
-
-.model-input:focus {
-  border-color: var(--c-blue);
-}
-
-.fetch-btn {
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 8px;
-  padding: 8px 12px;
-  color: var(--c-blue);
-  font-size: 0.82rem;
+  padding: 8px 10px;
+  color: var(--c-subtext1);
+  font-size: 0.78rem;
   cursor: pointer;
   white-space: nowrap;
+  font-family: inherit;
   transition: background 0.2s, border-color 0.2s;
 }
 
-.fetch-btn:hover:not(:disabled) {
+.small-btn:hover:not(:disabled) {
   background: var(--c-surface1);
-  border-color: var(--c-blue);
+  border-color: var(--c-surface2);
 }
 
-.fetch-btn:disabled {
+.small-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.models-hint {
+.fetch-btn {
+  color: var(--c-blue);
+}
+
+.fetch-hint {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--c-peach);
 }
 
-.models-list {
+.models-tags {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  max-height: 160px;
-  overflow-y: auto;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
-.model-item {
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: var(--c-surface0);
   border: 1px solid var(--c-surface1);
   border-radius: 6px;
-  padding: 5px 10px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
   color: var(--c-text);
-  font-size: 0.8rem;
+}
+
+.tag-remove {
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+  transition: color 0.15s;
 }
 
-.model-item:hover {
-  background: var(--c-surface1);
+.tag-remove:hover {
+  color: var(--c-red, #e64553);
 }
 
-.model-item.active {
-  border-color: var(--c-blue);
-  background: var(--c-badge-running-bg);
+.no-models-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--c-overlay0);
+  font-style: italic;
+}
+
+/* Add provider button */
+.add-provider-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  background: none;
+  border: 1px dashed var(--c-surface2);
+  border-radius: 10px;
+  color: var(--c-subtext0);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+  flex-shrink: 0;
+}
+
+.add-provider-btn:hover {
   color: var(--c-blue);
+  border-color: var(--c-blue);
+  background: var(--c-surface0);
+}
+
+.section-divider {
+  border-top: 1px solid var(--c-surface0);
+  margin: 4px 0;
+}
+
+/* Footer */
+.settings-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--c-surface0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .settings-message {
   margin: 0;
   font-size: 0.85rem;
   color: var(--c-green);
+}
+
+.settings-message.error {
+  color: var(--c-red, #e64553);
 }
 
 .save-btn {

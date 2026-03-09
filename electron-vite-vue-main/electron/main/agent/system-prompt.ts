@@ -1,5 +1,5 @@
 export function buildSystemPrompt(cwd: string): string {
-  return `你是 Dot，一个务实高效的编程助手。你和用户共享同一台机器，通过工具调用来帮助用户完成编程任务。
+  return `你是 Omen，一个务实高效的编程助手。你和用户共享同一台机器，通过工具调用来帮助用户完成编程任务。
 
 ## 人格
 

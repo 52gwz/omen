@@ -8,6 +8,8 @@ marked.setOptions({
   gfm: true,
 })
 
+const REASONING_COLLAPSE_DELAY = 300
+
 const props = defineProps<{
   conversationId: string
 }>()
@@ -31,6 +33,7 @@ interface ChatMessage {
   content: string
   reasoning?: string
   reasoningExpanded?: boolean
+  images?: string[]
   toolCalls?: ToolCallInfo[]
 }
 
@@ -57,9 +60,12 @@ const messages = reactive<ChatMessage[]>([])
 const inputText = ref('')
 const isStreaming = ref(false)
 const currentModel = ref('')
+const activeProviderId = ref('')
+const providers = ref<ModelProvider[]>([])
 const errorMsg = ref('')
 const chatMode = ref<ChatMode>('agent')
 const modeDropdownOpen = ref(false)
+const modelSelectorOpen = ref(false)
 const debugMode = ref(true)
 const debugPanelOpen = ref(false)
 const debugSelectedMsg = ref<number | null>(null)
@@ -68,19 +74,165 @@ const debugCopied = ref(false)
 const messagesContainer = ref<HTMLElement>()
 const inputEl = ref<HTMLTextAreaElement>()
 const modeDropdownRef = ref<HTMLElement>()
+const modelSelectorRef = ref<HTMLElement>()
+const reasoningContentRefs = new Map<number, HTMLElement>()
+
+const pendingImages = reactive<string[]>([])
+const MAX_IMAGE_SIZE = 4 * 1024 * 1024 // 4MB per image after compression
+
+function setReasoningContentRef(el: HTMLElement | null, idx: number) {
+  if (el) reasoningContentRefs.set(idx, el)
+  else reasoningContentRefs.delete(idx)
+}
+
+function scrollReasoningToBottom(idx: number) {
+  nextTick(() => {
+    const el = reasoningContentRefs.get(idx)
+    if (el) el.scrollTop = el.scrollHeight
+  })
+}
 
 let currentRequestId = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+let loadMessagesPromise: Promise<void> | null = null
 
-const canSend = computed(() => inputText.value.trim() && !isStreaming.value && !!currentModel.value)
+const canSend = computed(() => (inputText.value.trim() || pendingImages.length > 0) && !isStreaming.value && !!currentModel.value)
 
 const agentCwd = ref('~')
+
+const activeProviderName = computed(() => {
+  const p = providers.value.find(p => p.id === activeProviderId.value)
+  return p?.name || ''
+})
+
+function buildApiContent(text: string, images?: string[]): string | MultimodalContent {
+  if (!images?.length) return text
+  const parts: MultimodalContent = []
+  if (text) parts.push({ type: 'text', text })
+  for (const img of images) {
+    parts.push({ type: 'image_url', image_url: { url: img } })
+  }
+  return parts
+}
+
+function compressImageIfNeeded(dataUrl: string, maxBytes: number): Promise<string> {
+  return new Promise((resolve) => {
+    if (dataUrl.length * 0.75 <= maxBytes) {
+      resolve(dataUrl)
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      let { width, height } = img
+      const maxDim = 1600
+      if (width > maxDim || height > maxDim) {
+        const ratio = Math.min(maxDim / width, maxDim / height)
+        width = Math.round(width * ratio)
+        height = Math.round(height * ratio)
+      }
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, width, height)
+      let quality = 0.85
+      let result = canvas.toDataURL('image/jpeg', quality)
+      while (result.length * 0.75 > maxBytes && quality > 0.3) {
+        quality -= 0.15
+        result = canvas.toDataURL('image/jpeg', quality)
+      }
+      resolve(result)
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+async function addImages(dataUrls: string[]) {
+  for (const raw of dataUrls) {
+    const compressed = await compressImageIfNeeded(raw, MAX_IMAGE_SIZE)
+    pendingImages.push(compressed)
+  }
+}
+
+function removePendingImage(index: number) {
+  pendingImages.splice(index, 1)
+}
+
+async function selectImages() {
+  const images = await window.dialogApi.selectImages()
+  if (images.length) await addImages(images)
+}
+
+function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  let hasImage = false
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (item.type.startsWith('image/')) {
+      hasImage = true
+      const file = item.getAsFile()
+      if (!file) continue
+      const reader = new FileReader()
+      reader.onload = async () => {
+        if (typeof reader.result === 'string') {
+          await addImages([reader.result])
+        }
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+  if (hasImage) e.preventDefault()
+}
+
+function handleDrop(e: DragEvent) {
+  e.preventDefault()
+  const files = e.dataTransfer?.files
+  if (!files) return
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i]
+    if (!file.type.startsWith('image/')) continue
+    const reader = new FileReader()
+    reader.onload = async () => {
+      if (typeof reader.result === 'string') {
+        await addImages([reader.result])
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+}
+
+function handleDragOver(e: DragEvent) {
+  e.preventDefault()
+}
 
 async function loadConfig() {
   try {
     const config = await window.aiChat.getConfig()
-    currentModel.value = config.defaultModel || ''
+    providers.value = config.providers || []
+    activeProviderId.value = config.activeProviderId || ''
+    currentModel.value = config.activeModel || ''
+
+    // Auto-select first available model if nothing active
+    if (!currentModel.value && providers.value.length) {
+      for (const p of providers.value) {
+        if (p.models.length) {
+          activeProviderId.value = p.id
+          currentModel.value = p.models[0]
+          await window.aiChat.setActive(p.id, p.models[0])
+          break
+        }
+      }
+    }
   } catch {}
+}
+
+async function selectProviderModel(providerId: string, model: string) {
+  activeProviderId.value = providerId
+  currentModel.value = model
+  modelSelectorOpen.value = false
+  await window.aiChat.setActive(providerId, model)
 }
 
 async function loadCwd() {
@@ -104,6 +256,7 @@ async function loadMessages() {
       content: m.content,
     }
     if (m.reasoning) msg.reasoning = m.reasoning
+    if (m.images?.length) msg.images = m.images
     if (m.toolCalls?.length) {
       msg.toolCalls = m.toolCalls.map((tc: any) => ({
         id: tc.id,
@@ -125,6 +278,7 @@ function scheduleSave() {
     const toSave: StoredMessage[] = messages.map((m) => {
       const stored: StoredMessage = { role: m.role, content: m.content }
       if (m.reasoning) stored.reasoning = m.reasoning
+      if (m.images?.length) stored.images = m.images
       if (m.toolCalls?.length) {
         stored.toolCalls = m.toolCalls.map((tc) => ({
           id: tc.id,
@@ -172,18 +326,20 @@ function sendChatMessage(text: string) {
   messages.push({ role: 'assistant', content: '', reasoning: '' })
   isStreaming.value = true
 
-  const historyMessages = messages.slice(0, -1).map((m) => ({
+  const historyMessages: ApiMessage[] = messages.slice(0, -1).map((m) => ({
     role: m.role,
-    content: m.content,
+    content: buildApiContent(m.content, m.images),
   }))
 
-  window.aiChat.startStream({ requestId, model: currentModel.value, messages: historyMessages })
+  window.aiChat.startStream({ requestId, model: currentModel.value, messages: historyMessages, providerId: activeProviderId.value })
 
   const assistantIdx = messages.length - 1
 
   const offReasoning = window.aiChat.onStreamReasoning(({ requestId: rid, delta }) => {
     if (rid !== requestId) return
     messages[assistantIdx].reasoning = (messages[assistantIdx].reasoning || '') + delta
+    if (!messages[assistantIdx].reasoningExpanded) messages[assistantIdx].reasoningExpanded = true
+    scrollReasoningToBottom(assistantIdx)
     scrollToBottom()
   })
 
@@ -196,6 +352,7 @@ function sendChatMessage(text: string) {
   const offDone = window.aiChat.onStreamDone(({ requestId: rid }) => {
     if (rid !== requestId) return
     isStreaming.value = false
+    setTimeout(() => { messages[assistantIdx].reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
     cleanup()
     scheduleSave()
   })
@@ -224,18 +381,21 @@ function sendAgentMessage(text: string) {
   messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [] })
   isStreaming.value = true
 
-  const historyMessages = messages.slice(0, -1).map((m) => ({
+  const historyMessages: ApiMessage[] = messages.slice(0, -1).map((m) => ({
     role: m.role,
-    content: m.content,
+    content: buildApiContent(m.content, m.images),
   }))
 
-  window.agentChat.start({ requestId, model: currentModel.value, messages: historyMessages, cwd: agentCwd.value })
+  window.agentChat.start({ requestId, model: currentModel.value, messages: historyMessages, cwd: agentCwd.value, providerId: activeProviderId.value })
 
   const offReasoning = window.agentChat.onStreamReasoning(({ requestId: rid, delta }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
       msg.reasoning = (msg.reasoning || '') + delta
+      if (!msg.reasoningExpanded) msg.reasoningExpanded = true
+      const idx = messages.lastIndexOf(msg)
+      scrollReasoningToBottom(idx)
       scrollToBottom()
     }
   })
@@ -244,6 +404,7 @@ function sendAgentMessage(text: string) {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
+      if (!msg.content && msg.reasoning) setTimeout(() => { msg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
       msg.content += delta
       scrollToBottom()
     }
@@ -253,6 +414,7 @@ function sendAgentMessage(text: string) {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
+      if (msg.reasoning) setTimeout(() => { msg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
       if (!msg.toolCalls) msg.toolCalls = []
       msg.toolCalls.push({ id: toolCallId, name, arguments: args, status: autoApprove ? 'running' : 'pending' })
       scrollToBottom()
@@ -305,6 +467,7 @@ function sendAgentMessage(text: string) {
     if (msg && !msg.content && !msg.toolCalls?.length && !msg.reasoning) {
       messages.pop()
     }
+    setTimeout(() => { const lastMsg = getLastAssistant(); if (lastMsg) lastMsg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
     cleanup()
     scheduleSave()
   })
@@ -333,19 +496,26 @@ function sendAgentMessage(text: string) {
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if (!text || isStreaming.value) return
+  if ((!text && pendingImages.length === 0) || isStreaming.value) return
 
   errorMsg.value = ''
 
-  // Auto-rename conversation with first user message
+  const images = pendingImages.length > 0 ? [...pendingImages] : undefined
+
   const isFirstMessage = messages.length === 0
-  messages.push({ role: 'user', content: text })
+  const msg: ChatMessage = { role: 'user', content: text }
+  if (images) msg.images = images
+  messages.push(msg)
+
   if (isFirstMessage && props.conversationId) {
-    const title = text.length > 30 ? text.slice(0, 30) + '...' : text
+    const title = text
+      ? (text.length > 30 ? text.slice(0, 30) + '...' : text)
+      : `图片消息 (${images?.length || 0}张)`
     window.conversationApi.rename(props.conversationId, title)
   }
 
   inputText.value = ''
+  pendingImages.splice(0)
   nextTick(() => {
     if (inputEl.value) {
       inputEl.value.style.height = 'auto'
@@ -405,6 +575,19 @@ function handleClickOutside(e: MouseEvent) {
   if (modeDropdownRef.value && !modeDropdownRef.value.contains(e.target as Node)) {
     modeDropdownOpen.value = false
   }
+  if (modelSelectorRef.value && !modelSelectorRef.value.contains(e.target as Node)) {
+    modelSelectorOpen.value = false
+  }
+}
+
+const imagePreviewUrl = ref<string | null>(null)
+
+function openImagePreview(url: string) {
+  imagePreviewUrl.value = url
+}
+
+function closeImagePreview() {
+  imagePreviewUrl.value = null
 }
 
 const debugMessagesJson = computed(() => {
@@ -436,7 +619,7 @@ watch(isStreaming, (val) => {
 onMounted(() => {
   loadConfig()
   loadCwd()
-  loadMessages()
+  loadMessagesPromise = loadMessages()
   inputEl.value?.focus()
   document.addEventListener('click', handleClickOutside)
 })
@@ -452,157 +635,61 @@ onUnmounted(() => {
   }
 })
 
-function loadTestConversation() {
-  messages.length = 0
-
-  // 1. 用户简单消息
-  messages.push({ role: 'user', content: '你好，帮我介绍一下这个项目' })
-
-  // 2. 助手回复：包含丰富 Markdown
-  messages.push({
-    role: 'assistant',
-    content: `## 项目概述
-
-这是一个基于 **Electron + Vue 3** 的桌面 AI 助手应用，支持多种功能：
-
-### 主要特性
-
-1. **聊天模式** — 普通对话，支持 Markdown 渲染
-2. **Agent 模式** — 可调用工具完成编程任务
-3. *流式输出* — 实时显示生成内容
-
-### 代码示例
-
-\`\`\`typescript
-const app = createApp(App)
-app.mount('#app')
-\`\`\`
-
-行内代码：使用 \`ref()\` 创建响应式变量。
-
-### 表格
-
-| 功能 | 状态 | 说明 |
-|------|------|------|
-| 聊天 | 已完成 | 基础对话 |
-| Agent | 已完成 | 工具调用 |
-| 浏览器 | 开发中 | 自动化 |
-
-> 这是一段引用文字，通常用来强调关键信息。
-
----
-
-更多信息请参考 [GitHub](https://github.com)。`,
-    reasoning: '用户想了解项目，我需要全面介绍项目的功能和技术栈。\n\n**分析要点：**\n\n需要涵盖以下内容：\n1. 技术架构\n2. 核心功能\n3. 使用示例',
-    reasoningExpanded: false,
-  })
-
-  // 3. 用户追问
-  messages.push({ role: 'user', content: '帮我看一下当前目录的文件结构，然后读取 package.json' })
-
-  // 4. 助手回复 + 已完成的工具调用 (exec_command + read_file)
-  messages.push({
-    role: 'assistant',
-    content: '我来查看一下项目结构。',
-    toolCalls: [
-      {
-        id: 'tc-1',
-        name: 'exec_command',
-        arguments: JSON.stringify({ command: 'ls -la' }),
-        status: 'completed',
-        result: 'total 48\ndrwxr-xr-x  12 user  staff   384 Mar  7 10:00 .\ndrwxr-xr-x   5 user  staff   160 Mar  6 09:00 ..\n-rw-r--r--   1 user  staff   220 Mar  7 10:00 package.json\n-rw-r--r--   1 user  staff  1200 Mar  6 15:00 tsconfig.json\ndrwxr-xr-x   8 user  staff   256 Mar  7 09:00 src\ndrwxr-xr-x   4 user  staff   128 Mar  6 12:00 electron\n[exit code: 0]',
-      },
-      {
-        id: 'tc-2',
-        name: 'read_file',
-        arguments: JSON.stringify({ path: 'package.json' }),
-        status: 'completed',
-        result: '{\n  "name": "dot-app",\n  "version": "0.1.0",\n  "main": "electron/main/index.ts",\n  "scripts": {\n    "dev": "vite",\n    "build": "vue-tsc && vite build"\n  }\n}',
-      },
-    ],
-  })
-
-  // 5. 助手继续解释 (模拟 new turn)
-  messages.push({
-    role: 'assistant',
-    content: '项目结构很清晰，这是一个标准的 Electron + Vue 项目。`package.json` 中定义了基础的 dev 和 build 脚本。',
-  })
-
-  // 6. 用户请求写文件
-  messages.push({ role: 'user', content: '在 src 目录下创建一个 utils.ts 工具文件' })
-
-  // 7. 助手回复 + 写文件工具（pending 状态，等待确认）
-  messages.push({
-    role: 'assistant',
-    content: '我来创建这个工具文件。',
-    toolCalls: [
-      {
-        id: 'tc-3',
-        name: 'write_file',
-        arguments: JSON.stringify({
-          path: 'src/utils.ts',
-          content: 'export function formatDate(d: Date): string {\n  return d.toLocaleDateString()\n}\n\nexport function sleep(ms: number) {\n  return new Promise(r => setTimeout(r, ms))\n}',
-        }),
-        status: 'pending',
-      },
-    ],
-  })
-
-  // 8. 用户另一个请求
-  messages.push({ role: 'user', content: '运行一下测试命令，另外搜索一下代码中的 TODO' })
-
-  // 9. 助手回复 + running 工具 + 已被拒绝的工具 + error 工具
-  messages.push({
-    role: 'assistant',
-    content: '',
-    toolCalls: [
-      {
-        id: 'tc-4',
-        name: 'exec_command',
-        arguments: JSON.stringify({ command: 'npm test' }),
-        status: 'running',
-        streamOutput: '> dot-app@0.1.0 test\n> vitest run\n\n RUN  v1.3.0\n\n ✓ src/utils.test.ts (2 tests) 12ms\n   ✓ formatDate returns correct format\n   ✓ sleep waits for specified time\n\n Running remaining tests...',
-      },
-      {
-        id: 'tc-5',
-        name: 'grep_search',
-        arguments: JSON.stringify({ pattern: 'TODO', path: 'src/' }),
-        status: 'rejected',
-        result: '用户拒绝了此操作',
-      },
-      {
-        id: 'tc-6',
-        name: 'list_directory',
-        arguments: JSON.stringify({ path: '/nonexistent' }),
-        status: 'error',
-        result: 'Error: ENOENT: no such file or directory, scandir \'/nonexistent\'',
-      },
-    ],
-  })
-
-  // 10. 用户发送多行消息
-  messages.push({
-    role: 'user',
-    content: '请帮我：\n1. 修复上面的错误\n2. 重新搜索 TODO\n3. 给项目加个 README',
-  })
-
-  // 11. 助手纯文本简短回复
-  messages.push({
-    role: 'assistant',
-    content: '好的，我来逐一处理这些任务。',
-  })
-
-  scrollToBottom(true)
+async function sendWithContent(text: string, images?: string[], providerId?: string, model?: string) {
+  if (loadMessagesPromise) await loadMessagesPromise
+  if (providerId) activeProviderId.value = providerId
+  if (model) currentModel.value = model
+  if (images?.length) await addImages(images)
+  inputText.value = text
+  await nextTick()
+  sendMessage()
 }
 
-defineExpose({ loadConfig, loadTestConversation })
+defineExpose({ loadConfig, sendWithContent })
 </script>
 
 <template>
   <div class="chat-container">
     <!-- 顶栏 -->
     <div class="chat-topbar">
-      <span class="current-model">{{ currentModel || '未配置模型' }}</span>
+      <div ref="modelSelectorRef" class="model-selector">
+        <button class="model-selector-btn" @click.stop="modelSelectorOpen = !modelSelectorOpen">
+          <span v-if="activeProviderName" class="model-provider-label">{{ activeProviderName }}</span>
+          <span class="model-name-label">{{ currentModel || '未配置模型' }}</span>
+          <svg
+            class="model-selector-chevron"
+            :class="{ open: modelSelectorOpen }"
+            width="11" height="11" viewBox="0 0 24 24"
+            fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        <Transition name="dropdown">
+          <div v-if="modelSelectorOpen" class="model-selector-menu">
+            <div v-if="!providers.length" class="model-selector-empty">请先在设置中配置供应商</div>
+            <template v-else>
+              <div v-for="p in providers" :key="p.id" class="model-selector-group">
+                <div class="model-selector-group-title">{{ p.name || '未命名' }}</div>
+                <button
+                  v-for="m in p.models"
+                  :key="`${p.id}-${m}`"
+                  class="model-selector-item"
+                  :class="{ active: activeProviderId === p.id && currentModel === m }"
+                  @click="selectProviderModel(p.id, m)"
+                >
+                  <span>{{ m }}</span>
+                  <svg v-if="activeProviderId === p.id && currentModel === m" class="check-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </button>
+                <div v-if="!p.models.length" class="model-selector-no-models">暂无模型</div>
+              </div>
+            </template>
+          </div>
+        </Transition>
+      </div>
       <button v-if="chatMode === 'agent'" class="cwd-btn" :title="agentCwd" @click="changeCwd">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -621,7 +708,6 @@ defineExpose({ loadConfig, loadTestConversation })
     <div ref="messagesContainer" class="messages-area" @scroll="onMessagesScroll">
       <div v-if="!messages.length" class="empty-state">
         <p>{{ chatMode === 'agent' ? '描述你的编程任务' : '开始对话吧' }}</p>
-        <button class="test-conv-btn" @click="loadTestConversation">加载测试对话</button>
       </div>
 
       <div
@@ -660,12 +746,29 @@ defineExpose({ loadConfig, loadTestConversation })
                 <polyline points="6 9 12 15 18 9" />
               </svg>
             </button>
-            <div v-if="msg.reasoningExpanded" class="reasoning-panel">
-              <div class="reasoning-content" v-html="renderReasoning(msg.reasoning)"></div>
+            <div class="reasoning-collapse" :class="{ expanded: msg.reasoningExpanded }">
+              <div class="reasoning-panel">
+                <div
+                  :ref="(el) => setReasoningContentRef(el as HTMLElement | null, i)"
+                  class="reasoning-content"
+                  v-html="renderReasoning(msg.reasoning)"
+                ></div>
+              </div>
             </div>
           </div>
 
-          <!-- Text content (before tool calls) -->
+          <!-- Images in user message -->
+          <div v-if="msg.images?.length" class="message-images">
+            <img
+              v-for="(img, imgIdx) in msg.images"
+              :key="imgIdx"
+              :src="img"
+              class="message-image"
+              @click="openImagePreview(img)"
+            />
+          </div>
+
+          <!-- Text content -->
           <div v-if="msg.content && msg.role === 'user'" class="message-content">{{ msg.content }}</div>
           <div v-if="msg.content && msg.role === 'assistant'" class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
 
@@ -699,7 +802,18 @@ defineExpose({ loadConfig, loadTestConversation })
     </div>
 
     <!-- 输入区 -->
-    <div class="input-area">
+    <div class="input-area" @drop="handleDrop" @dragover="handleDragOver">
+      <!-- Pending images preview -->
+      <div v-if="pendingImages.length" class="pending-images">
+        <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-image-item">
+          <img :src="img" class="pending-image-thumb" />
+          <button class="pending-image-remove" @click="removePendingImage(idx)" title="移除">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      </div>
       <div class="input-row">
         <div ref="modeDropdownRef" class="mode-dropdown">
           <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
@@ -733,6 +847,13 @@ defineExpose({ loadConfig, loadTestConversation })
             </div>
           </Transition>
         </div>
+        <button class="image-upload-btn" @click="selectImages" title="添加图片">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
+          </svg>
+        </button>
         <textarea
           ref="inputEl"
           v-model="inputText"
@@ -741,6 +862,7 @@ defineExpose({ loadConfig, loadTestConversation })
           :placeholder="chatMode === 'agent' ? 'Agent 模式：描述任务...' : '输入消息... (Shift+Enter 换行)'"
           @keydown="handleKeydown"
           @input="autoResize"
+          @paste="handlePaste"
         />
         <button v-if="isStreaming" class="stop-btn" @click="stopGeneration" title="终止对话">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
@@ -755,6 +877,14 @@ defineExpose({ loadConfig, loadTestConversation })
         </button>
       </div>
     </div>
+
+    <!-- Image Preview Overlay -->
+    <Transition name="dropdown">
+      <div v-if="imagePreviewUrl" class="image-preview-overlay" @click="closeImagePreview">
+        <img :src="imagePreviewUrl" class="image-preview-full" @click.stop />
+        <button class="image-preview-close" @click="closeImagePreview">✕</button>
+      </div>
+    </Transition>
 
     <!-- Debug Panel -->
     <Transition name="debug-slide">
@@ -807,11 +937,127 @@ defineExpose({ loadConfig, loadTestConversation })
   -webkit-app-region: drag;
 }
 
-.current-model {
+/* -- Model Selector -- */
+.model-selector {
   -webkit-app-region: no-drag;
+  position: relative;
+}
+
+.model-selector-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+  user-select: none;
+}
+
+.model-selector-btn:hover {
+  background: var(--c-surface0);
+  border-color: var(--c-surface1);
+}
+
+.model-provider-label {
+  font-size: 0.72rem;
+  color: var(--c-overlay0);
+  padding: 1px 6px;
+  background: var(--c-surface0);
+  border-radius: 4px;
+}
+
+.model-name-label {
   font-size: 0.82rem;
   color: var(--c-overlay1);
-  user-select: none;
+}
+
+.model-selector-chevron {
+  color: var(--c-overlay0);
+  transition: transform 0.2s ease;
+}
+
+.model-selector-chevron.open {
+  transform: rotate(180deg);
+}
+
+.model-selector-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 220px;
+  max-width: 320px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-surface1);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 8px 24px var(--c-shadow-heavy);
+  z-index: 100;
+}
+
+.model-selector-empty {
+  padding: 12px 14px;
+  font-size: 0.82rem;
+  color: var(--c-overlay0);
+  text-align: center;
+}
+
+.model-selector-group {
+  padding: 2px 0;
+}
+
+.model-selector-group + .model-selector-group {
+  border-top: 1px solid var(--c-surface0);
+  margin-top: 2px;
+  padding-top: 4px;
+}
+
+.model-selector-group-title {
+  padding: 6px 10px 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--c-overlay0);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.model-selector-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--c-text);
+  font-size: 0.84rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.model-selector-item:hover {
+  background: var(--c-surface-hover);
+}
+
+.model-selector-item.active {
+  background: var(--c-surface0);
+  color: var(--c-blue);
+}
+
+.model-selector-no-models {
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: var(--c-overlay0);
+  font-style: italic;
 }
 
 .cwd-btn {
@@ -860,24 +1106,6 @@ defineExpose({ loadConfig, loadTestConversation })
   color: var(--c-overlay0);
   font-size: 1.1rem;
   gap: 16px;
-}
-
-.test-conv-btn {
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 8px;
-  padding: 6px 16px;
-  color: var(--c-overlay1);
-  font-size: 0.78rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.2s, color 0.2s, border-color 0.2s;
-}
-
-.test-conv-btn:hover {
-  background: var(--c-surface-hover);
-  color: var(--c-subtext1);
-  border-color: var(--c-surface2);
 }
 
 .message-row {
@@ -1118,12 +1346,25 @@ defineExpose({ loadConfig, loadTestConversation })
   transform: rotate(180deg);
 }
 
+.reasoning-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease-out;
+}
+
+.reasoning-collapse.expanded {
+  grid-template-rows: 1fr;
+}
+
 .reasoning-panel {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.reasoning-panel > .reasoning-content {
   margin-top: 8px;
   padding: 14px 16px;
   background: var(--c-surface-alt);
-  border-radius: 10px;
-  border-left: 3px solid var(--c-surface2);
 }
 
 .reasoning-content {
@@ -1321,6 +1562,136 @@ defineExpose({ loadConfig, loadTestConversation })
 .dropdown-leave-to {
   opacity: 0;
   transform: translateY(4px);
+}
+
+/* -- Image upload button -- */
+.image-upload-btn {
+  background: var(--c-surface0);
+  border: 1px solid var(--c-surface1);
+  color: var(--c-overlay0);
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.image-upload-btn:hover {
+  color: var(--c-subtext1);
+  background: var(--c-surface-hover);
+  border-color: var(--c-surface2);
+}
+
+/* -- Pending images preview -- */
+.pending-images {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0 4px;
+  overflow-x: auto;
+  flex-wrap: wrap;
+}
+
+.pending-image-item {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.pending-image-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--c-surface1);
+}
+
+.pending-image-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--c-surface2);
+  border: none;
+  color: var(--c-text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.pending-image-remove:hover {
+  background: var(--c-red, #e64553);
+  color: #fff;
+}
+
+/* -- Message images -- */
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.message-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 8px;
+  cursor: pointer;
+  object-fit: cover;
+  transition: opacity 0.15s;
+}
+
+.message-image:hover {
+  opacity: 0.85;
+}
+
+/* -- Image preview overlay -- */
+.image-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  cursor: pointer;
+}
+
+.image-preview-full {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  object-fit: contain;
+  cursor: default;
+}
+
+.image-preview-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  border: none;
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.image-preview-close:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
 /* -- Input & send -- */

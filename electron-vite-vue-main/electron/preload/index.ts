@@ -25,16 +25,19 @@ contextBridge.exposeInMainWorld('aiChat', {
   getConfig() {
     return ipcRenderer.invoke('ai:get-config')
   },
-  saveConfig(config: { apiKey: string; baseURL: string; defaultModel: string; maxIterations: number }) {
+  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; maxIterations: number }) {
     return ipcRenderer.invoke('ai:save-config', config)
   },
-  getModels(): Promise<string[]> {
-    return ipcRenderer.invoke('ai:models')
+  setActive(providerId: string, model: string) {
+    return ipcRenderer.invoke('ai:set-active', { providerId, model })
   },
-  sendMessage(payload: { model: string; messages: { role: string; content: string }[] }): Promise<string> {
+  getModels(opts?: { apiKey?: string; baseURL?: string; providerId?: string }): Promise<string[]> {
+    return ipcRenderer.invoke('ai:models', opts)
+  },
+  sendMessage(payload: { model: string; messages: any[]; providerId?: string }): Promise<string> {
     return ipcRenderer.invoke('ai:chat', payload)
   },
-  startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }) {
+  startStream(payload: { requestId: string; model: string; messages: any[]; providerId?: string }) {
     ipcRenderer.send('ai:chat-stream', payload)
   },
   stopStream(requestId: string) {
@@ -64,7 +67,7 @@ contextBridge.exposeInMainWorld('aiChat', {
 
 // --------- Agent API ---------
 contextBridge.exposeInMainWorld('agentChat', {
-  start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }) {
+  start(payload: { requestId: string; model: string; messages: any[]; cwd: string; providerId?: string }) {
     ipcRenderer.send('agent:start', payload)
   },
   stop(requestId: string) {
@@ -131,6 +134,9 @@ contextBridge.exposeInMainWorld('dialogApi', {
   selectDirectory(): Promise<string | null> {
     return ipcRenderer.invoke('dialog:select-directory')
   },
+  selectImages(): Promise<string[]> {
+    return ipcRenderer.invoke('dialog:select-images')
+  },
 })
 
 // --------- Project & Conversation API ---------
@@ -150,11 +156,11 @@ contextBridge.exposeInMainWorld('projectApi', {
 })
 
 contextBridge.exposeInMainWorld('conversationApi', {
-  list(): Promise<{ id: string; title: string; createdAt: number; cwd?: string }[]> {
-    return ipcRenderer.invoke('conversation:list')
+  list(projectId?: string | null): Promise<{ id: string; title: string; createdAt: number; cwd?: string; projectId?: string }[]> {
+    return ipcRenderer.invoke('conversation:list', projectId)
   },
-  create(title: string): Promise<{ id: string; title: string; createdAt: number; cwd?: string }> {
-    return ipcRenderer.invoke('conversation:create', title)
+  create(title: string, projectId?: string): Promise<{ id: string; title: string; createdAt: number; cwd?: string; projectId?: string }> {
+    return ipcRenderer.invoke('conversation:create', title, projectId)
   },
   delete(convId: string): Promise<void> {
     return ipcRenderer.invoke('conversation:delete', convId)
@@ -173,6 +179,13 @@ contextBridge.exposeInMainWorld('conversationApi', {
   },
   getCwd(convId: string): Promise<string> {
     return ipcRenderer.invoke('conversation:get-cwd', convId)
+  },
+})
+
+// --------- Filesystem API ---------
+contextBridge.exposeInMainWorld('fsApi', {
+  readDir(dirPath: string): Promise<{ name: string; path: string; isDirectory: boolean }[]> {
+    return ipcRenderer.invoke('fs:read-dir', dirPath)
   },
 })
 

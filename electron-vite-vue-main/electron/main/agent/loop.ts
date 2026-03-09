@@ -31,7 +31,7 @@ interface ToolCallDelta {
 interface AgentRunParams {
   requestId: string
   model: string
-  messages: { role: string; content: string }[]
+  messages: { role: string; content: string | MessageContent }[]
   apiKey: string
   baseURL: string
   cwd: string
@@ -221,10 +221,10 @@ export async function runAgentLoop(params: AgentRunParams) {
 
   const allMessages: Message[] = [
     { role: 'system', content: buildSystemPrompt(cwd) },
-    ...params.messages.map((m) => ({ role: m.role, content: m.content })),
+    ...params.messages.map((m): Message => ({ role: m.role, content: m.content })),
   ]
 
-  for (let i = 0; i < maxIterations; i++) {
+  for (let i = 0; maxIterations <= 0 || i < maxIterations; i++) {
     if (signal?.aborted) {
       sender.send('agent:done', { requestId, stopped: true })
       return

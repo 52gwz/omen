@@ -1,35 +1,90 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, provide, onMounted, onUnmounted, watch } from 'vue'
 import { useTheme } from '../composables/useTheme'
+import FileTreeNode from './FileTreeNode.vue'
 
 const props = defineProps<{
   runningConvIds: Set<string>
+  /** 项目模式：传入后侧边栏只显示该项目的对话列表 */
+  projectId?: string
+  projectName?: string
+  projectPath?: string
 }>()
 
 const emit = defineEmits<{
   selectConversation: [convId: string]
   noSelection: []
   deleteConversation: [convId: string]
+  openProject: [project: ProjectData]
+  closeProject: []
+  createTask: []
 }>()
 
 const { theme, toggleTheme } = useTheme()
 
 const conversations = reactive<ConversationMeta[]>([])
+const projects = reactive<ProjectData[]>([])
 const activeConvId = ref('')
-const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: string }>({
-  visible: false, x: 0, y: 0, targetId: '',
+const isHomeActive = ref(true)
+const projectsExpanded = ref(true)
+const conversationsExpanded = ref(true)
+const filesExpanded = ref(true)
+const fileTree = reactive<FileEntry[]>([])
+const expandedDirs = reactive(new Set<string>())
+const dirChildren = reactive<Record<string, FileEntry[]>>({})
+const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: string; type: 'conv' | 'project' }>({
+  visible: false, x: 0, y: 0, targetId: '', type: 'conv',
 })
 
+provide('fileTree:expandedDirs', expandedDirs)
+provide('fileTree:dirChildren', dirChildren)
+provide('fileTree:toggleDir', toggleDir)
+
 async function loadConversations() {
-  const list = await window.conversationApi.list()
+  const list = await window.conversationApi.list(props.projectId || null)
   conversations.length = 0
   conversations.push(...list)
 }
 
-async function createConversation() {
-  const meta = await window.conversationApi.create('新对话')
-  conversations.unshift(meta)
-  selectConv(meta.id)
+async function loadProjects() {
+  const list = await window.projectApi.list()
+  projects.length = 0
+  projects.push(...list)
+}
+
+function openHome() {
+  activeConvId.value = ''
+  isHomeActive.value = true
+  emit('createTask')
+}
+
+async function loadFileTree() {
+  if (!props.projectPath) return
+  const entries = await window.fsApi.readDir(props.projectPath)
+  fileTree.length = 0
+  fileTree.push(...entries)
+  expandedDirs.clear()
+  for (const key in dirChildren) delete dirChildren[key]
+}
+
+async function toggleDir(dirPath: string) {
+  if (expandedDirs.has(dirPath)) {
+    expandedDirs.delete(dirPath)
+  } else {
+    if (!dirChildren[dirPath]) {
+      dirChildren[dirPath] = await window.fsApi.readDir(dirPath)
+    }
+    expandedDirs.add(dirPath)
+  }
+}
+
+async function createProject() {
+  const folderPath = await window.dialogApi.selectDirectory()
+  if (!folderPath) return
+  const project = await window.projectApi.add(folderPath)
+  if (project && !projects.some((p) => p.id === project.id)) {
+    projects.unshift(project)
+  }
 }
 
 async function deleteConversation(convId: string) {
@@ -43,14 +98,26 @@ async function deleteConversation(convId: string) {
   }
 }
 
+async function deleteProject(projectId: string) {
+  await window.projectApi.remove(projectId)
+  const idx = projects.findIndex((p) => p.id === projectId)
+  if (idx >= 0) projects.splice(idx, 1)
+}
+
 function selectConv(convId: string) {
   activeConvId.value = convId
+  isHomeActive.value = false
   emit('selectConversation', convId)
 }
 
 function onConvContext(e: MouseEvent, convId: string) {
   e.preventDefault()
-  contextMenu.value = { visible: true, x: e.clientX, y: e.clientY, targetId: convId }
+  contextMenu.value = { visible: true, x: e.clientX, y: e.clientY, targetId: convId, type: 'conv' }
+}
+
+function onProjectContext(e: MouseEvent, projectId: string) {
+  e.preventDefault()
+  contextMenu.value = { visible: true, x: e.clientX, y: e.clientY, targetId: projectId, type: 'project' }
 }
 
 function closeContextMenu() {
@@ -58,15 +125,24 @@ function closeContextMenu() {
 }
 
 async function handleContextAction(action: string) {
-  const { targetId } = contextMenu.value
+  const { targetId, type } = contextMenu.value
   closeContextMenu()
   if (action === 'delete') {
-    await deleteConversation(targetId)
+    if (type === 'conv') await deleteConversation(targetId)
+    else await deleteProject(targetId)
   }
 }
 
+watch(() => props.projectId, () => {
+  activeConvId.value = ''
+  loadConversations()
+  if (props.projectId) loadFileTree()
+})
+
 onMounted(() => {
   loadConversations()
+  if (!props.projectId) loadProjects()
+  else loadFileTree()
   document.addEventListener('click', closeContextMenu)
 })
 
@@ -79,8 +155,27 @@ defineExpose({ loadConversations })
 
 <template>
   <div class="sidebar">
+    <div class="titlebar-spacer"></div>
     <div class="sidebar-header">
-      <span class="sidebar-title">Dot</span>
+      <!-- 项目模式 -->
+      <template v-if="projectId">
+        <button class="back-btn" title="返回" @click="emit('closeProject')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+        <div class="sidebar-project-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <span class="sidebar-title">{{ projectName || '项目' }}</span>
+        </div>
+      </template>
+      <!-- 普通模式 -->
+      <template v-else>
+        <span class="sidebar-title">Omen</span>
+      </template>
+
       <div class="header-actions">
         <button class="header-icon-btn" :title="theme === 'light' ? '切换暗色' : '切换明亮'" @click="toggleTheme">
           <svg v-if="theme === 'light'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -98,36 +193,120 @@ defineExpose({ loadConversations })
             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
           </svg>
         </button>
-        <button class="header-icon-btn" title="新对话" @click="createConversation">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
       </div>
     </div>
 
-    <div class="conversation-list">
-      <div
-        v-for="conv in conversations"
-        :key="conv.id"
-        class="conversation-item"
-        :class="{ active: activeConvId === conv.id }"
-        @click="selectConv(conv.id)"
-        @contextmenu="onConvContext($event, conv.id)"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <span class="conv-title">{{ conv.title }}</span>
-        <span v-if="runningConvIds.has(conv.id)" class="running-dot" title="运行中"></span>
+    <!-- 普通模式：项目区 -->
+    <template v-if="!projectId">
+      <div class="projects-section">
+        <button
+          class="new-chat-btn"
+          @click="openHome"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          <span>发起对话</span>
+        </button>
+
+        <div class="section-header" @click="projectsExpanded = !projectsExpanded">
+          <div class="section-header-left">
+            <svg
+              class="collapse-arrow"
+              :class="{ collapsed: !projectsExpanded }"
+              width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+            <span class="section-label">项目</span>
+          </div>
+          <span class="section-count">{{ projects.length }}</span>
+        </div>
+
+        <div v-show="projectsExpanded" class="project-list">
+          <div
+            v-for="project in projects"
+            :key="project.id"
+            class="project-item"
+            @click="emit('openProject', project)"
+            @contextmenu="onProjectContext($event, project.id)"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+            </svg>
+            <span class="project-name">{{ project.name }}</span>
+          </div>
+          <div v-if="!projects.length" class="section-empty">
+            <span>暂无项目</span>
+          </div>
+        </div>
       </div>
-      <div v-if="!conversations.length" class="empty-hint">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-        </svg>
-        <p>暂无对话</p>
-        <p class="empty-hint-sub">点击上方 + 创建新对话</p>
+
+    </template>
+
+    <!-- 项目模式：文件浏览器 -->
+    <div v-if="projectId" class="files-section">
+      <div class="section-header" @click="filesExpanded = !filesExpanded">
+        <div class="section-header-left">
+          <svg
+            class="collapse-arrow"
+            :class="{ collapsed: !filesExpanded }"
+            width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <span class="section-label">文件</span>
+        </div>
+        <span class="section-count">{{ fileTree.length }}</span>
+      </div>
+
+      <div v-show="filesExpanded" class="file-tree">
+        <FileTreeNode v-if="fileTree.length" :entries="fileTree" :depth="0" />
+        <div v-else class="section-empty">
+          <span>暂无文件</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 对话区（可折叠） -->
+    <div class="conversations-section">
+      <div class="section-header" @click="conversationsExpanded = !conversationsExpanded">
+        <div class="section-header-left">
+          <svg
+            class="collapse-arrow"
+            :class="{ collapsed: !conversationsExpanded }"
+            width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <span class="section-label">对话</span>
+        </div>
+        <span class="section-count">{{ conversations.length }}</span>
+      </div>
+
+      <div v-show="conversationsExpanded" class="conversation-list">
+        <div
+          v-for="conv in conversations"
+          :key="conv.id"
+          class="conversation-item"
+          :class="{ active: activeConvId === conv.id }"
+          @click="selectConv(conv.id)"
+          @contextmenu="onConvContext($event, conv.id)"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <span class="conv-title">{{ conv.title }}</span>
+          <span v-if="runningConvIds.has(conv.id)" class="running-dot" title="运行中"></span>
+        </div>
+        <div v-if="!conversations.length" class="empty-hint">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          <p>暂无对话</p>
+          <p class="empty-hint-sub">点击上方 + 创建新对话</p>
+        </div>
       </div>
     </div>
 
@@ -137,7 +316,9 @@ defineExpose({ loadConversations })
         class="ctx-menu"
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       >
-        <button @click="handleContextAction('delete')">删除对话</button>
+        <button @click="handleContextAction('delete')">
+          {{ contextMenu.type === 'project' ? '删除项目' : '删除对话' }}
+        </button>
       </div>
     </Teleport>
   </div>
@@ -157,12 +338,52 @@ defineExpose({ loadConversations })
   -webkit-app-region: drag;
 }
 
+.titlebar-spacer {
+  height: 28px;
+  flex-shrink: 0;
+}
+
 .sidebar-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 12px 10px;
   border-bottom: 1px solid var(--c-surface0);
+  gap: 6px;
+}
+
+.back-btn {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.2s, background 0.2s;
+}
+
+.back-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.sidebar-project-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar-project-title svg {
+  color: var(--c-yellow, #df8e1d);
+  flex-shrink: 0;
 }
 
 .sidebar-title {
@@ -171,6 +392,9 @@ defineExpose({ loadConversations })
   font-weight: 700;
   color: var(--c-text);
   letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .header-actions {
@@ -178,6 +402,7 @@ defineExpose({ loadConversations })
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 .header-icon-btn {
@@ -199,11 +424,166 @@ defineExpose({ loadConversations })
   background: var(--c-surface0);
 }
 
-.conversation-list {
+/* ---- Projects Section ---- */
+.projects-section {
+  -webkit-app-region: no-drag;
+  border-bottom: 1px solid var(--c-surface0);
+  padding-bottom: 4px;
+}
+
+.new-chat-btn {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: calc(100% - 16px);
+  padding: 8px 12px;
+  margin: 8px 8px 4px;
+  border-radius: 8px;
+  border: 1px dashed var(--c-surface2);
+  background: transparent;
+  color: var(--c-subtext0);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.new-chat-btn:hover {
+  background: var(--c-surface0);
+  color: var(--c-text);
+  border-color: var(--c-overlay0);
+}
+
+.new-chat-btn svg {
+  flex-shrink: 0;
+  color: var(--c-overlay0);
+  transition: color 0.15s;
+}
+
+.new-chat-btn:hover svg {
+  color: var(--c-blue);
+}
+
+.section-header {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 4px 8px;
+  cursor: pointer;
+  border-radius: 5px;
+  margin: 0 4px;
+  transition: background 0.15s;
+}
+
+.section-header:hover {
+  background: var(--c-surface0);
+}
+
+.section-header-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.collapse-arrow {
+  color: var(--c-overlay0);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.collapse-arrow.collapsed {
+  transform: rotate(-90deg);
+}
+
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--c-overlay0);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.section-count {
+  font-size: 0.7rem;
+  color: var(--c-surface2);
+  background: var(--c-surface0);
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.project-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.project-item {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  margin: 1px 6px;
+  transition: background 0.15s;
+}
+
+.project-item:hover {
+  background: var(--c-base);
+}
+
+.project-item svg {
+  flex-shrink: 0;
+  color: var(--c-yellow, #df8e1d);
+}
+
+.project-name {
+  font-size: 0.82rem;
+  color: var(--c-subtext0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.section-empty {
+  padding: 8px 12px;
+  font-size: 0.75rem;
+  color: var(--c-surface2);
+}
+
+/* ---- Files Section ---- */
+.files-section {
+  -webkit-app-region: no-drag;
+  border-bottom: 1px solid var(--c-surface0);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 50%;
+}
+
+.file-tree {
+  overflow-y: auto;
+  padding: 2px 0 4px;
+}
+
+/* ---- Conversations Section ---- */
+.conversations-section {
   -webkit-app-region: no-drag;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.conversation-list {
+  flex: 1;
   overflow-y: auto;
-  padding: 6px 0;
+  padding: 2px 0 6px;
 }
 
 .conversation-item {
@@ -247,7 +627,6 @@ defineExpose({ loadConversations })
 }
 
 .empty-hint {
-  -webkit-app-region: no-drag;
   flex: 1;
   display: flex;
   flex-direction: column;

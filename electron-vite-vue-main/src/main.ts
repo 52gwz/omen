@@ -3,7 +3,7 @@ import App from './App.vue'
 
 import './style.css'
 
-const savedTheme = localStorage.getItem('dot-theme') || 'light'
+const savedTheme = localStorage.getItem('omen-theme') || 'light'
 document.documentElement.setAttribute('data-theme', savedTheme)
 
 createApp(App)

@@ -38,7 +38,16 @@ interface StoredMessage {
   role: string
   content: string
   reasoning?: string
+  images?: string[]
   toolCalls?: StoredToolCall[]
+}
+
+interface ModelProvider {
+  id: string
+  name: string
+  apiKey: string
+  baseURL: string
+  models: string[]
 }
 
 type StoreSchema = {
@@ -46,6 +55,9 @@ type StoreSchema = {
   baseURL: string
   defaultModel: string
   maxIterations: number
+  providers: ModelProvider[]
+  activeProviderId: string
+  activeModel: string
   projects: ProjectData[]
   conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
 }
@@ -55,19 +67,53 @@ const store = new Store<StoreSchema>({
     apiKey: '',
     baseURL: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
-    maxIterations: 20,
+    maxIterations: 0,
+    providers: [],
+    activeProviderId: '',
+    activeModel: '',
     projects: [],
     conversations: {},
   },
 })
 
-function getAiConfig() {
-  const apiKey = store.get('apiKey')
-  if (!apiKey) throw new Error('请先在设置中填写 API Key')
+// Migrate legacy single config to multi-provider format
+;(function migrateConfig() {
+  const providers = store.get('providers') || []
+  if (providers.length === 0) {
+    const apiKey = store.get('apiKey')
+    if (apiKey) {
+      const defaultModel = store.get('defaultModel') || 'gpt-4o-mini'
+      const provider: ModelProvider = {
+        id: crypto.randomUUID(),
+        name: 'Default',
+        apiKey,
+        baseURL: store.get('baseURL') || 'https://api.openai.com/v1',
+        models: [defaultModel],
+      }
+      store.set('providers', [provider])
+      store.set('activeProviderId', provider.id)
+      store.set('activeModel', defaultModel)
+    }
+  }
+})()
 
-  const baseURL = (store.get('baseURL') || 'https://api.openai.com/v1').replace(/\/+$/, '')
-  const defaultModel = store.get('defaultModel') || 'gpt-4o-mini'
-  return { apiKey, baseURL, defaultModel }
+function getAiConfig(providerId?: string) {
+  const providers = store.get('providers') || []
+  const pid = providerId || store.get('activeProviderId')
+  const provider = providers.find(p => p.id === pid)
+
+  if (!provider) {
+    const apiKey = store.get('apiKey')
+    if (!apiKey) throw new Error('请先在设置中配置模型供应商')
+    const baseURL = (store.get('baseURL') || 'https://api.openai.com/v1').replace(/\/+$/, '')
+    return { apiKey, baseURL }
+  }
+
+  if (!provider.apiKey) throw new Error(`供应商 "${provider.name}" 未设置 API Key`)
+  return {
+    apiKey: provider.apiKey,
+    baseURL: (provider.baseURL || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+  }
 }
 
 // The built directory structure
@@ -105,20 +151,17 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
+
 async function createWindow() {
   win = new BrowserWindow({
-    title: 'Main window',
+    title: 'Omen',
     width: 1280,
     height: 760,
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 12, y: 12 },
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
-      // Warning: Enable nodeIntegration and disable contextIsolation is not secure in production
-      // nodeIntegration: true,
-
-      // Consider using contextBridge.exposeInMainWorld
-      // Read more on https://www.electronjs.org/docs/latest/tutorial/context-isolation
-      // contextIsolation: false,
     },
   })
 
@@ -177,22 +220,40 @@ app.on('activate', () => {
 
 ipcMain.handle('ai:get-config', () => {
   return {
-    apiKey: store.get('apiKey'),
-    baseURL: store.get('baseURL'),
-    defaultModel: store.get('defaultModel'),
-    maxIterations: store.get('maxIterations'),
+    providers: store.get('providers') || [],
+    activeProviderId: store.get('activeProviderId') || '',
+    activeModel: store.get('activeModel') || '',
+    maxIterations: store.get('maxIterations') ?? 0,
   }
 })
 
-ipcMain.handle('ai:save-config', (_, config: { apiKey: string; baseURL: string; defaultModel: string; maxIterations: number }) => {
-  store.set('apiKey', config.apiKey)
-  store.set('baseURL', config.baseURL)
-  store.set('defaultModel', config.defaultModel)
+ipcMain.handle('ai:save-config', (_, config: {
+  providers: ModelProvider[]
+  activeProviderId: string
+  activeModel: string
+  maxIterations: number
+}) => {
+  store.set('providers', config.providers)
+  store.set('activeProviderId', config.activeProviderId)
+  store.set('activeModel', config.activeModel)
   store.set('maxIterations', config.maxIterations)
 })
 
-ipcMain.handle('ai:models', async () => {
-  const { apiKey, baseURL } = getAiConfig()
+ipcMain.handle('ai:set-active', (_, data: { providerId: string; model: string }) => {
+  store.set('activeProviderId', data.providerId)
+  store.set('activeModel', data.model)
+})
+
+ipcMain.handle('ai:models', async (_, opts?: { apiKey?: string; baseURL?: string; providerId?: string }) => {
+  let apiKey: string, baseURL: string
+  if (opts?.apiKey && opts?.baseURL) {
+    apiKey = opts.apiKey
+    baseURL = opts.baseURL.replace(/\/+$/, '')
+  } else {
+    const config = getAiConfig(opts?.providerId)
+    apiKey = config.apiKey
+    baseURL = config.baseURL
+  }
   const res = await fetch(`${baseURL}/models`, {
     headers: { Authorization: `Bearer ${apiKey}` },
   })
@@ -205,8 +266,8 @@ ipcMain.handle('ai:models', async () => {
   }
 })
 
-ipcMain.handle('ai:chat', async (_, payload: { model: string; messages: { role: string; content: string }[] }) => {
-  const { apiKey, baseURL } = getAiConfig()
+ipcMain.handle('ai:chat', async (_, payload: { model: string; messages: any[]; providerId?: string }) => {
+  const { apiKey, baseURL } = getAiConfig(payload.providerId)
   const provider = createOpenAI({ apiKey, baseURL })
   const { text } = await generateText({
     model: provider(payload.model),
@@ -215,20 +276,21 @@ ipcMain.handle('ai:chat', async (_, payload: { model: string; messages: { role: 
   return text
 })
 
-ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: string; messages: { role: string; content: string }[] }) => {
-  const { requestId, model, messages } = payload
+ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: string; messages: any[]; providerId?: string }) => {
+  const { requestId, model, messages, providerId } = payload
   const sender = event.sender
 
   console.log(`\n[Chat ${requestId.slice(0, 8)}] model=${model}`)
   for (const m of messages) {
-    console.log(`  [${m.role}] ${m.content.length > 200 ? m.content.slice(0, 200) + '...' : m.content}`)
+    const contentStr = typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+    console.log(`  [${m.role}] ${contentStr.length > 200 ? contentStr.slice(0, 200) + '...' : contentStr}`)
   }
 
   const abortController = new AbortController()
   activeAbortControllers.set(requestId, abortController)
 
   try {
-    const { apiKey, baseURL } = getAiConfig()
+    const { apiKey, baseURL } = getAiConfig(providerId)
     const response = await fetch(`${baseURL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -342,8 +404,9 @@ import { browserManager } from './agent/browser'
 ipcMain.on('agent:start', async (event, payload: {
   requestId: string
   model: string
-  messages: { role: string; content: string }[]
+  messages: any[]
   cwd: string
+  providerId?: string
 }) => {
   const { requestId, model, messages } = payload
   const sender = event.sender
@@ -359,8 +422,8 @@ ipcMain.on('agent:start', async (event, payload: {
   activeAbortControllers.set(requestId, abortController)
 
   try {
-    const { apiKey, baseURL } = getAiConfig()
-    const maxIterations = store.get('maxIterations') || 20
+    const { apiKey, baseURL } = getAiConfig(payload.providerId)
+    const maxIterations = store.get('maxIterations') ?? 0
     await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, signal: abortController.signal })
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -382,6 +445,25 @@ ipcMain.handle('dialog:select-directory', async () => {
   })
   if (result.canceled || !result.filePaths.length) return null
   return result.filePaths[0]
+})
+
+ipcMain.handle('dialog:select-images', async () => {
+  if (!win) return []
+  const result = await dialog.showOpenDialog(win, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'] }],
+  })
+  if (result.canceled || !result.filePaths.length) return []
+  const images: string[] = []
+  for (const filePath of result.filePaths) {
+    try {
+      const ext = path.extname(filePath).toLowerCase().replace('.', '')
+      const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`
+      const data = fs.readFileSync(filePath)
+      images.push(`data:${mime};base64,${data.toString('base64')}`)
+    } catch { /* skip unreadable files */ }
+  }
+  return images
 })
 
 // ---- Project & Conversation IPC Handlers ----
@@ -429,18 +511,27 @@ ipcMain.handle('project:check-path', (_, folderPath: string): boolean => {
   }
 })
 
-ipcMain.handle('conversation:list', (): ConversationMeta[] => {
+
+ipcMain.handle('conversation:list', (_, projectId?: string | null): ConversationMeta[] => {
   const conversations = store.get('conversations') || {}
   return Object.values(conversations)
     .map((c) => c.meta)
+    .filter((meta) => {
+      if (projectId) return meta.projectId === projectId
+      return !meta.projectId
+    })
     .sort((a, b) => b.createdAt - a.createdAt)
 })
 
-ipcMain.handle('conversation:create', (_, title: string): ConversationMeta => {
+ipcMain.handle('conversation:create', (_, title: string, projectId?: string): ConversationMeta => {
+  const projects = store.get('projects') || []
+  const project = projectId ? projects.find((p) => p.id === projectId) : undefined
   const meta: ConversationMeta = {
     id: crypto.randomUUID(),
     title: title || '新对话',
     createdAt: Date.now(),
+    projectId,
+    cwd: project?.path,
   }
   const conversations = store.get('conversations') || {}
   conversations[meta.id] = { meta, messages: [] }
@@ -485,5 +576,26 @@ ipcMain.handle('conversation:save-messages', (_, convId: string, messages: Store
   if (conversations[convId]) {
     conversations[convId].messages = messages
     store.set('conversations', conversations)
+  }
+})
+
+// ---- Filesystem IPC Handlers ----
+
+ipcMain.handle('fs:read-dir', (_, dirPath: string): { name: string; path: string; isDirectory: boolean }[] => {
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    return entries
+      .filter(e => !e.name.startsWith('.'))
+      .map(e => ({
+        name: e.name,
+        path: path.join(dirPath, e.name),
+        isDirectory: e.isDirectory(),
+      }))
+      .sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+        return a.name.localeCompare(b.name)
+      })
+  } catch {
+    return []
   }
 })

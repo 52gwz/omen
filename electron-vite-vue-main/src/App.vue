@@ -1,15 +1,30 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, nextTick } from 'vue'
 import ChatView from './components/ChatView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
+import WelcomeScreen from './components/WelcomeScreen.vue'
 
 const showSettings = ref(false)
 const chatRefs = ref<Record<string, InstanceType<typeof ChatView>>>({})
+const sidebarRef = ref<InstanceType<typeof Sidebar>>()
 
 const activeConvId = ref('')
 const openedConvIds = ref<string[]>([])
 const runningConvIds = reactive(new Set<string>())
+
+// 当前激活的项目（null = 普通对话模式）
+const activeProject = ref<ProjectData | null>(null)
+
+function onOpenProject(project: ProjectData) {
+  activeProject.value = project
+  activeConvId.value = ''
+}
+
+function onCloseProject() {
+  activeProject.value = null
+  activeConvId.value = ''
+}
 
 function onSettingsClose() {
   showSettings.value = false
@@ -53,15 +68,33 @@ function setChatRef(convId: string, el: any) {
     delete chatRefs.value[convId]
   }
 }
+
+async function handleWelcomeSend(payload: { text: string; images?: string[]; providerId: string; model: string }) {
+  const meta = await window.conversationApi.create('新对话')
+  onSelectConversation(meta.id)
+  sidebarRef.value?.loadConversations()
+  await nextTick()
+  const chatRef = chatRefs.value[meta.id]
+  if (chatRef) {
+    chatRef.sendWithContent(payload.text, payload.images, payload.providerId, payload.model)
+  }
+}
 </script>
 
 <template>
   <div class="app-root">
     <Sidebar
+      ref="sidebarRef"
       :running-conv-ids="runningConvIds"
+      :project-id="activeProject?.id"
+      :project-name="activeProject?.name"
+      :project-path="activeProject?.path"
       @select-conversation="onSelectConversation"
       @no-selection="onNoSelection"
       @delete-conversation="onDeleteConversation"
+      @open-project="onOpenProject"
+      @close-project="onCloseProject"
+      @create-task="onNoSelection"
     />
 
     <div class="main-area">
@@ -74,9 +107,7 @@ function setChatRef(convId: string, el: any) {
         @streaming-change="(s: boolean) => onStreamingChange(convId, s)"
       />
 
-      <div v-if="!activeConvId" class="no-conv-placeholder">
-        <p>选择或创建一个对话</p>
-      </div>
+      <WelcomeScreen v-if="!activeConvId" :project-name="activeProject?.name" @send="handleWelcomeSend" />
 
       <button class="settings-fab" title="设置" @click="showSettings = true">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -102,21 +133,6 @@ function setChatRef(convId: string, el: any) {
   flex: 1;
   position: relative;
   min-width: 0;
-}
-
-.no-conv-placeholder {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--c-base);
-  color: var(--c-surface2);
-  font-size: 1rem;
-  -webkit-app-region: drag;
-}
-
-.no-conv-placeholder p {
-  -webkit-app-region: no-drag;
 }
 
 .settings-fab {

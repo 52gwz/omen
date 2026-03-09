@@ -6,19 +6,28 @@ declare module '*.vue' {
   export default component
 }
 
-interface AiChatConfig {
+interface ModelProvider {
+  id: string
+  name: string
   apiKey: string
   baseURL: string
-  defaultModel: string
+  models: string[]
+}
+
+interface AiChatConfig {
+  providers: ModelProvider[]
+  activeProviderId: string
+  activeModel: string
   maxIterations: number
 }
 
 interface AiChatApi {
   getConfig(): Promise<AiChatConfig>
-  saveConfig(config: AiChatConfig): Promise<void>
-  getModels(): Promise<string[]>
-  sendMessage(payload: { model: string; messages: { role: string; content: string }[] }): Promise<string>
-  startStream(payload: { requestId: string; model: string; messages: { role: string; content: string }[] }): void
+  saveConfig(config: AiChatConfig & { providers: ModelProvider[] }): Promise<void>
+  setActive(providerId: string, model: string): Promise<void>
+  getModels(opts?: { apiKey?: string; baseURL?: string; providerId?: string }): Promise<string[]>
+  sendMessage(payload: { model: string; messages: ApiMessage[]; providerId?: string }): Promise<string>
+  startStream(payload: { requestId: string; model: string; messages: ApiMessage[]; providerId?: string }): void
   stopStream(requestId: string): void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
@@ -27,7 +36,7 @@ interface AiChatApi {
 }
 
 interface AgentChatApi {
-  start(payload: { requestId: string; model: string; messages: { role: string; content: string }[]; cwd: string }): void
+  start(payload: { requestId: string; model: string; messages: ApiMessage[]; cwd: string; providerId?: string }): void
   stop(requestId: string): void
   confirmTool(requestId: string, toolCallId: string): void
   rejectTool(requestId: string, toolCallId: string): void
@@ -45,6 +54,7 @@ interface AgentChatApi {
 
 interface DialogApi {
   selectDirectory(): Promise<string | null>
+  selectImages(): Promise<string[]>
 }
 
 interface ProjectData {
@@ -58,6 +68,7 @@ interface ConversationMeta {
   title: string
   createdAt: number
   cwd?: string
+  projectId?: string
 }
 
 interface ProjectApi {
@@ -80,18 +91,39 @@ interface StoredMessage {
   role: string
   content: string
   reasoning?: string
+  images?: string[]
   toolCalls?: StoredToolCall[]
 }
 
+type MultimodalContent = Array<
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+>
+
+interface ApiMessage {
+  role: string
+  content: string | MultimodalContent
+}
+
 interface ConversationApi {
-  list(): Promise<ConversationMeta[]>
-  create(title: string): Promise<ConversationMeta>
+  list(projectId?: string | null): Promise<ConversationMeta[]>
+  create(title: string, projectId?: string): Promise<ConversationMeta>
   delete(convId: string): Promise<void>
   rename(convId: string, title: string): Promise<void>
   getMessages(convId: string): Promise<StoredMessage[]>
   saveMessages(convId: string, messages: StoredMessage[]): Promise<void>
   setCwd(convId: string, cwd: string): Promise<void>
   getCwd(convId: string): Promise<string>
+}
+
+interface FileEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+}
+
+interface FsApi {
+  readDir(dirPath: string): Promise<FileEntry[]>
 }
 
 interface Window {
@@ -101,4 +133,5 @@ interface Window {
   dialogApi: DialogApi
   projectApi: ProjectApi
   conversationApi: ConversationApi
+  fsApi: FsApi
 }
