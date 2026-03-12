@@ -11,6 +11,9 @@
     "dist",
     "dist-electron"
   ],
+  "extraResources": [
+    "builtin-skills/**"
+  ],
   "mac": {
     "target": [
       "dmg"

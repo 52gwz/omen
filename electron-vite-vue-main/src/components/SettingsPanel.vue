@@ -7,6 +7,7 @@ const providers = reactive<ModelProvider[]>([])
 const activeProviderId = ref('')
 const activeModel = ref('')
 const maxIterations = ref(0)
+const autoApproveAll = ref(false)
 const saving = ref(false)
 const message = ref('')
 const expandedId = ref<string | null>(null)
@@ -14,6 +15,7 @@ const expandedId = ref<string | null>(null)
 const fetchingMap = reactive<Record<string, boolean>>({})
 const fetchErrorMap = reactive<Record<string, string>>({})
 const newModelInput = reactive<Record<string, string>>({})
+const keyVisibleMap = reactive<Record<string, boolean>>({})
 
 onMounted(async () => {
   try {
@@ -25,6 +27,7 @@ onMounted(async () => {
     activeProviderId.value = config.activeProviderId
     activeModel.value = config.activeModel
     maxIterations.value = config.maxIterations ?? 0
+    autoApproveAll.value = config.autoApproveAll ?? false
     if (providers.length === 1) expandedId.value = providers[0].id
   } catch {}
 })
@@ -129,6 +132,7 @@ async function save() {
       activeProviderId: activeProviderId.value,
       activeModel: activeModel.value,
       maxIterations: maxIterations.value,
+      autoApproveAll: autoApproveAll.value,
     })
     message.value = '保存成功'
     setTimeout(() => emit('close'), 600)
@@ -180,7 +184,20 @@ async function save() {
             </label>
             <label>
               <span>API Key</span>
-              <input v-model="p.apiKey" type="password" placeholder="sk-..." />
+              <div class="key-input-wrap">
+                <input v-model="p.apiKey" :type="keyVisibleMap[p.id] ? 'text' : 'password'" placeholder="sk-..." />
+                <button class="key-toggle-btn" type="button" @click="keyVisibleMap[p.id] = !keyVisibleMap[p.id]" tabindex="-1">
+                  <svg v-if="keyVisibleMap[p.id]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                  </svg>
+                  <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                    <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                  </svg>
+                </button>
+              </div>
             </label>
             <label>
               <span>Base URL</span>
@@ -231,6 +248,17 @@ async function save() {
           <span>Agent 最大迭代次数 (0 = 无限制)</span>
           <input v-model.number="maxIterations" type="number" min="0" max="200" placeholder="0" />
         </label>
+
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <span class="toggle-label">自动批准所有工具调用</span>
+            <span class="toggle-desc">开启后 Agent 将跳过确认直接执行所有操作，包括写文件和运行命令</span>
+          </div>
+          <label class="settings-toggle" @click.stop>
+            <input type="checkbox" v-model="autoApproveAll" />
+            <span class="settings-toggle-slider"></span>
+          </label>
+        </div>
       </div>
 
       <div class="settings-footer">
@@ -252,6 +280,7 @@ async function save() {
   align-items: center;
   justify-content: center;
   z-index: 100;
+  -webkit-app-region: no-drag;
 }
 
 .settings-panel {
@@ -421,6 +450,35 @@ async function save() {
   border-color: var(--c-blue);
 }
 
+.key-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.key-input-wrap input {
+  width: 100%;
+  padding-right: 36px;
+}
+
+.key-toggle-btn {
+  position: absolute;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s;
+}
+
+.key-toggle-btn:hover {
+  color: var(--c-text);
+}
+
 /* Models section */
 .models-section {
   display: flex;
@@ -581,5 +639,77 @@ async function save() {
 .save-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Toggle row */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+}
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle-label {
+  font-size: 0.82rem;
+  color: var(--c-subtext0);
+  font-weight: 500;
+}
+
+.toggle-desc {
+  font-size: 0.72rem;
+  color: var(--c-overlay0);
+  line-height: 1.4;
+}
+
+.settings-toggle {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.settings-toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--c-surface2);
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+.settings-toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  bottom: 2px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.settings-toggle input:checked + .settings-toggle-slider {
+  background: var(--c-blue, #1e66f5);
+}
+
+.settings-toggle input:checked + .settings-toggle-slider::before {
+  transform: translateX(18px);
 }
 </style>

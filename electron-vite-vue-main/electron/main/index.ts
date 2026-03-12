@@ -31,7 +31,6 @@ interface StoredToolCall {
   arguments: string
   status: string
   result?: string
-  screenshot?: string
 }
 
 interface StoredMessage {
@@ -55,11 +54,13 @@ type StoreSchema = {
   baseURL: string
   defaultModel: string
   maxIterations: number
+  autoApproveAll: boolean
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
   projects: ProjectData[]
   conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
+  disabledSkills: string[]
 }
 
 const store = new Store<StoreSchema>({
@@ -68,11 +69,13 @@ const store = new Store<StoreSchema>({
     baseURL: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
     maxIterations: 0,
+    autoApproveAll: false,
     providers: [],
     activeProviderId: '',
     activeModel: '',
     projects: [],
     conversations: {},
+    disabledSkills: [],
   },
 })
 
@@ -162,6 +165,7 @@ async function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
+      webviewTag: true,
     },
   })
 
@@ -194,9 +198,10 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async () => {
-  if (browserManager.isActive()) {
-    await browserManager.close().catch(() => {})
-  }
+  activeWatchers.forEach(w => w.close())
+  activeWatchers.clear()
+  watchDebounceTimers.forEach(t => clearTimeout(t))
+  watchDebounceTimers.clear()
 })
 
 app.on('second-instance', () => {
@@ -224,6 +229,7 @@ ipcMain.handle('ai:get-config', () => {
     activeProviderId: store.get('activeProviderId') || '',
     activeModel: store.get('activeModel') || '',
     maxIterations: store.get('maxIterations') ?? 0,
+    autoApproveAll: store.get('autoApproveAll') ?? false,
   }
 })
 
@@ -232,11 +238,13 @@ ipcMain.handle('ai:save-config', (_, config: {
   activeProviderId: string
   activeModel: string
   maxIterations: number
+  autoApproveAll: boolean
 }) => {
   store.set('providers', config.providers)
   store.set('activeProviderId', config.activeProviderId)
   store.set('activeModel', config.activeModel)
   store.set('maxIterations', config.maxIterations)
+  store.set('autoApproveAll', config.autoApproveAll)
 })
 
 ipcMain.handle('ai:set-active', (_, data: { providerId: string; model: string }) => {
@@ -399,7 +407,7 @@ ipcMain.on('agent:kill-command', (_, data: { toolCallId: string }) => {
 
 import { runAgentLoop } from './agent/loop'
 import { killRunningCommand } from './agent/tools'
-import { browserManager } from './agent/browser'
+import { loadSkills } from './agent/skills'
 
 ipcMain.on('agent:start', async (event, payload: {
   requestId: string
@@ -424,7 +432,9 @@ ipcMain.on('agent:start', async (event, payload: {
   try {
     const { apiKey, baseURL } = getAiConfig(payload.providerId)
     const maxIterations = store.get('maxIterations') ?? 0
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, signal: abortController.signal })
+    const autoApproveAll = store.get('autoApproveAll') ?? false
+    const disabledSkills = store.get('disabledSkills') || []
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills })
   } catch (err: any) {
     if (err.name === 'AbortError') {
       sender.send('agent:done', { requestId, stopped: true })
@@ -445,6 +455,17 @@ ipcMain.handle('dialog:select-directory', async () => {
   })
   if (result.canceled || !result.filePaths.length) return null
   return result.filePaths[0]
+})
+
+ipcMain.handle('dialog:select-files', async (_, defaultPath?: string) => {
+  if (!win) return []
+  const opts: Electron.OpenDialogOptions = {
+    properties: ['openFile', 'multiSelections'],
+  }
+  if (defaultPath) opts.defaultPath = defaultPath
+  const result = await dialog.showOpenDialog(win, opts)
+  if (result.canceled || !result.filePaths.length) return []
+  return result.filePaths
 })
 
 ipcMain.handle('dialog:select-images', async () => {
@@ -491,6 +512,14 @@ ipcMain.handle('project:add', (_, folderPath: string): ProjectData | null => {
   projects.push(project)
   store.set('projects', projects)
   return project
+})
+
+ipcMain.handle('project:rename', (_, projectId: string, newName: string) => {
+  const projects = store.get('projects') || []
+  const project = projects.find((p) => p.id === projectId)
+  if (!project) return
+  project.name = newName
+  store.set('projects', projects)
 })
 
 ipcMain.handle('project:remove', (_, projectId: string) => {
@@ -579,7 +608,69 @@ ipcMain.handle('conversation:save-messages', (_, convId: string, messages: Store
   }
 })
 
+// ---- Skills IPC Handlers ----
+
+ipcMain.handle('skills:list', async () => {
+  const disabledSkills = store.get('disabledSkills') || []
+  return loadSkills(disabledSkills)
+})
+
+ipcMain.handle('skills:import', async (): Promise<{ success: boolean; error?: string }> => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: '选择技能文件夹',
+    properties: ['openDirectory'],
+  })
+  if (canceled || !filePaths.length) return { success: false, error: '已取消' }
+
+  const srcDir = filePaths[0]
+  const skillFile = path.join(srcDir, 'SKILL.md')
+
+  if (!fs.existsSync(skillFile)) {
+    return { success: false, error: '所选文件夹中不存在 SKILL.md 文件' }
+  }
+
+  try {
+    const content = fs.readFileSync(skillFile, 'utf-8')
+    const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/)
+    if (!fmMatch) return { success: false, error: 'SKILL.md 缺少有效的 frontmatter' }
+    const yaml = fmMatch[1]
+    const name = yaml.match(/^name:\s*(.+)$/m)?.[1]?.trim()
+    const desc = yaml.match(/^description:\s*(.+)$/m)?.[1]?.trim()
+    if (!name || !desc) return { success: false, error: 'SKILL.md frontmatter 需要 name 和 description 字段' }
+  } catch {
+    return { success: false, error: '无法读取 SKILL.md' }
+  }
+
+  const globalSkillsDir = path.join(os.homedir(), '.agents', 'skills')
+  const folderName = path.basename(srcDir)
+  const destDir = path.join(globalSkillsDir, folderName)
+
+  try {
+    fs.mkdirSync(globalSkillsDir, { recursive: true })
+    fs.cpSync(srcDir, destDir, { recursive: true })
+  } catch (e: any) {
+    return { success: false, error: `复制失败: ${e.message}` }
+  }
+
+  return { success: true }
+})
+
+ipcMain.handle('skills:toggle', (_, name: string) => {
+  const disabledSkills: string[] = store.get('disabledSkills') || []
+  const idx = disabledSkills.indexOf(name)
+  if (idx >= 0) {
+    disabledSkills.splice(idx, 1)
+  } else {
+    disabledSkills.push(name)
+  }
+  store.set('disabledSkills', disabledSkills)
+})
+
 // ---- Filesystem IPC Handlers ----
+
+ipcMain.handle('fs:show-in-folder', (_, fullPath: string) => {
+  shell.showItemInFolder(fullPath)
+})
 
 ipcMain.handle('fs:read-dir', (_, dirPath: string): { name: string; path: string; isDirectory: boolean }[] => {
   try {
@@ -597,5 +688,77 @@ ipcMain.handle('fs:read-dir', (_, dirPath: string): { name: string; path: string
       })
   } catch {
     return []
+  }
+})
+
+ipcMain.handle('fs:read-file', async (_, filePath: string): Promise<{ content: string; error?: string }> => {
+  try {
+    const stat = fs.statSync(filePath)
+    if (stat.size > 5 * 1024 * 1024) {
+      return { content: '', error: '文件过大（超过 5MB）' }
+    }
+    const content = fs.readFileSync(filePath, 'utf-8')
+    return { content }
+  } catch (e: any) {
+    return { content: '', error: e.message }
+  }
+})
+
+ipcMain.handle('fs:delete-path', async (_, targetPath: string): Promise<{ error?: string }> => {
+  try {
+    await shell.trashItem(targetPath)
+    return {}
+  } catch (e: any) {
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('fs:write-file', async (_, filePath: string, content: string): Promise<{ error?: string }> => {
+  try {
+    fs.writeFileSync(filePath, content, 'utf-8')
+    return {}
+  } catch (e: any) {
+    return { error: e.message }
+  }
+})
+
+// ---- File Watcher ----
+
+const activeWatchers = new Map<string, fs.FSWatcher>()
+const watchDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+ipcMain.handle('fs:watch-dir', (_event, dirPath: string) => {
+  if (activeWatchers.has(dirPath)) {
+    activeWatchers.get(dirPath)!.close()
+  }
+  try {
+    const watcher = fs.watch(dirPath, { recursive: true }, () => {
+      if (watchDebounceTimers.has(dirPath)) {
+        clearTimeout(watchDebounceTimers.get(dirPath)!)
+      }
+      watchDebounceTimers.set(dirPath, setTimeout(() => {
+        watchDebounceTimers.delete(dirPath)
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('fs:dir-changed', { dirPath })
+        }
+      }, 300))
+    })
+    activeWatchers.set(dirPath, watcher)
+    watcher.on('error', () => {
+      activeWatchers.delete(dirPath)
+    })
+  } catch { /* directory may not exist */ }
+})
+
+ipcMain.handle('fs:unwatch-dir', (_event, dirPath: string) => {
+  const watcher = activeWatchers.get(dirPath)
+  if (watcher) {
+    watcher.close()
+    activeWatchers.delete(dirPath)
+  }
+  const timer = watchDebounceTimers.get(dirPath)
+  if (timer) {
+    clearTimeout(timer)
+    watchDebounceTimers.delete(dirPath)
   }
 })

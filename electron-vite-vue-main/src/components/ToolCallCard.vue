@@ -5,9 +5,8 @@ import { marked } from 'marked'
 const props = defineProps<{
   name: string
   arguments: string
-  status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
+  status: 'streaming' | 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
-  screenshot?: string
   streamOutput?: string
 }>()
 
@@ -17,7 +16,10 @@ const emit = defineEmits<{
   kill: []
 }>()
 
-const expanded = ref(false)
+const expanded = ref(
+  (props.name === 'write_file' || props.name === 'edit_file')
+  && props.status !== 'streaming' && props.status !== 'pending'
+)
 const userToggled = ref(false)
 const elapsedSeconds = ref(0)
 let elapsedTimer: ReturnType<typeof setInterval> | null = null
@@ -48,7 +50,10 @@ const elapsedDisplay = computed(() => {
   return `${m}m${s % 60}s`
 })
 
-watch(() => props.status, (s) => {
+watch(() => props.status, (s, prev) => {
+  if (prev === 'streaming' && s !== 'streaming') {
+    expanded.value = true
+  }
   if (s === 'running') startTimer()
   if (s === 'completed' || s === 'error' || s === 'rejected') stopTimer()
 }, { immediate: true })
@@ -83,14 +88,6 @@ const toolLabel: Record<string, string> = {
   list_directory: '列出目录',
   grep_search: '搜索内容',
   edit_file: '编辑文件',
-  browser_navigate: '浏览器导航',
-  browser_screenshot: '页面截图',
-  browser_click: '点击页面',
-  browser_type: '输入文本',
-  browser_get_text: '获取文本',
-  browser_scroll: '滚动页面',
-  browser_evaluate: '执行脚本',
-  browser_close: '关闭浏览器',
 }
 
 const displayName = computed(() => toolLabel[props.name] || props.name)
@@ -104,14 +101,14 @@ const argSummary = computed(() => {
     if (props.name === 'edit_file' && obj.path) return obj.path
     if (props.name === 'list_directory') return obj.path || '.'
     if (props.name === 'grep_search' && obj.pattern) return obj.pattern
-    if (props.name === 'browser_navigate' && obj.url) return obj.url
-    if (props.name === 'browser_evaluate' && obj.script) return obj.script
-    if (props.name === 'browser_click' && obj.selector) return obj.selector
-    if (props.name === 'browser_type' && obj.text) return obj.text
     const first = Object.values(obj)[0]
     return typeof first === 'string' ? first : JSON.stringify(first)
   } catch {
-    return props.arguments
+    const pathMatch = props.arguments.match(/"path"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    if (pathMatch) return pathMatch[1]
+    const cmdMatch = props.arguments.match(/"command"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    if (cmdMatch) return cmdMatch[1]
+    return ''
   }
 })
 
@@ -126,8 +123,12 @@ const parsedArgs = computed(() => {
   }
 })
 
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)/g, '')
+}
+
 function processCarriageReturns(text: string): string {
-  return text.split('\n').map(line => {
+  return stripAnsi(text).split('\n').map(line => {
     if (!line.includes('\r')) return line
     const parts = line.split('\r')
     let result = ''
@@ -165,6 +166,7 @@ watch(() => props.streamOutput, () => {
 
 const statusIcon = computed(() => {
   switch (props.status) {
+    case 'streaming': return 'streaming'
     case 'pending': return 'pending'
     case 'running': return 'running'
     case 'completed': return 'completed'
@@ -179,6 +181,58 @@ function renderMarkdown(raw: string): string {
 }
 
 const isExecCommand = computed(() => props.name === 'exec_command')
+const isFileGenTool = computed(() => props.name === 'write_file' || props.name === 'edit_file')
+
+function unescapePartialJson(s: string): string {
+  let trimmed = s
+  if (trimmed.endsWith('\\')) trimmed = trimmed.slice(0, -1)
+  try {
+    return JSON.parse('"' + trimmed + '"')
+  } catch {
+    return trimmed
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\')
+  }
+}
+
+const fileInfo = computed(() => {
+  if (!isFileGenTool.value) return null
+  const contentKey = props.name === 'edit_file' ? 'new_string' : 'content'
+  try {
+    const obj = JSON.parse(props.arguments)
+    return { path: obj.path || null, content: obj[contentKey] ?? null }
+  } catch {
+    const args = props.arguments
+    const pathMatch = args.match(/"path"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    const filePath = pathMatch ? pathMatch[1] : null
+    const keyRegex = new RegExp(`"${contentKey}"\\s*:\\s*"`)
+    const match = keyRegex.exec(args)
+    if (!match) return { path: filePath, content: null }
+    const rawContent = args.slice(match.index + match[0].length)
+    return { path: filePath, content: unescapePartialJson(rawContent) }
+  }
+})
+
+const fileLineCount = computed(() => {
+  const content = fileInfo.value?.content
+  if (!content) return 0
+  return content.split('\n').length
+})
+
+const streamingCodeEl = ref<HTMLElement>()
+
+watch(() => props.arguments, () => {
+  if (props.status === 'streaming') {
+    nextTick(() => {
+      if (streamingCodeEl.value) {
+        streamingCodeEl.value.scrollTop = streamingCodeEl.value.scrollHeight
+      }
+    })
+  }
+})
 
 const execCmd = computed(() => {
   if (!isExecCommand.value) return ''
@@ -246,9 +300,64 @@ const execOutput = computed(() => {
       </div>
     </div>
 
+    <!-- File gen panel: streaming (always visible) -->
+    <div v-if="isFileGenTool && status === 'streaming' && fileInfo" class="tool-detail">
+      <div class="file-gen-panel">
+        <div class="file-gen-header">
+          <div class="file-gen-title">
+            <svg class="file-gen-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span class="file-gen-path">{{ fileInfo.path || '...' }}</span>
+          </div>
+          <span class="file-gen-badge">
+            <span class="file-gen-dot"></span>
+            {{ fileLineCount }} 行
+          </span>
+        </div>
+        <div ref="streamingCodeEl" class="file-gen-body">
+          <pre class="file-gen-code">{{ fileInfo.content || '' }}<span class="cursor-blink">▍</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- File gen panel: non-streaming (expandable) -->
+    <Transition name="expand">
+    <div v-show="expanded && isFileGenTool && status !== 'streaming'" class="tool-detail">
+      <div class="file-gen-panel">
+        <div class="file-gen-header">
+          <div class="file-gen-title">
+            <svg class="file-gen-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span class="file-gen-path">{{ fileInfo?.path || '' }}</span>
+          </div>
+          <span class="file-gen-badge">{{ fileLineCount }} 行</span>
+        </div>
+        <div class="file-gen-body">
+          <pre class="file-gen-code">{{ fileInfo?.content || '' }}</pre>
+        </div>
+        <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="file-gen-footer">
+          <span class="file-gen-result" :class="result.startsWith('[error]') ? 'result-err' : 'result-ok'">
+            {{ result.startsWith('[error]') ? result : '✓ ' + result }}
+          </span>
+        </div>
+      </div>
+    </div>
+    </Transition>
+
+    <!-- Streaming: other tools -->
+    <div v-if="status === 'streaming' && !isFileGenTool" class="tool-detail">
+      <div class="tool-args">
+        <pre>{{ parsedArgs }}<span class="cursor-blink">▍</span></pre>
+      </div>
+    </div>
+
     <!-- exec_command: shell panel -->
     <Transition name="expand">
-    <div v-show="expanded && isExecCommand" class="tool-detail">
+    <div v-show="expanded && isExecCommand && status !== 'streaming'" class="tool-detail">
       <div class="shell-panel">
         <div class="shell-header">
           <div class="shell-title">
@@ -289,17 +398,13 @@ const execOutput = computed(() => {
 
     <!-- Other tools: generic detail -->
     <Transition name="expand">
-    <div v-show="expanded && !isExecCommand" class="tool-detail">
+    <div v-show="expanded && !isExecCommand && !isFileGenTool && status !== 'streaming'" class="tool-detail">
       <div class="tool-args">
         <pre>{{ parsedArgs }}</pre>
       </div>
 
       <div v-if="status === 'running' && streamOutput" ref="streamOutputEl" class="stream-output-panel">
         <pre class="stream-output-content">{{ displayStreamOutput }}</pre>
-      </div>
-
-      <div v-if="screenshot && status === 'completed'" class="screenshot-panel">
-        <img :src="`data:image/png;base64,${screenshot}`" class="screenshot-img" alt="页面截图" />
       </div>
 
       <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="result-panel">
@@ -507,23 +612,6 @@ const execOutput = computed(() => {
   line-height: 1.5;
 }
 
-.screenshot-panel {
-  background: var(--c-base);
-  border-radius: 6px;
-  padding: 6px;
-  overflow: hidden;
-  margin-bottom: 4px;
-}
-
-.screenshot-img {
-  width: 100%;
-  border-radius: 4px;
-  display: block;
-  cursor: pointer;
-  transition: opacity 0.2s;
-}
-.screenshot-img:hover { opacity: 0.9; }
-
 .result-panel {
   background: var(--c-base);
   border-radius: 6px;
@@ -540,6 +628,152 @@ const execOutput = computed(() => {
   word-break: break-all;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   line-height: 1.5;
+}
+
+/* ---- File Generation Panel ---- */
+.file-gen-panel {
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f4f4f5;
+  border: 1px solid #e2e2e4;
+  width: 580px;
+  max-width: 100%;
+}
+
+.file-gen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: #ebebed;
+  border-bottom: 1px solid #dddde0;
+}
+
+.file-gen-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.file-gen-icon {
+  color: #888;
+  flex-shrink: 0;
+}
+
+.file-gen-path {
+  font-size: 0.71rem;
+  color: #666;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-gen-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.68rem;
+  color: #888;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.file-gen-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4caf7d;
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.file-gen-body {
+  padding: 10px 14px 12px;
+  max-height: 350px;
+  overflow-y: auto;
+}
+
+.file-gen-body::-webkit-scrollbar {
+  width: 4px;
+}
+.file-gen-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.file-gen-body::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
+}
+
+.file-gen-code {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.78rem;
+  color: #2c2c2e;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.file-gen-footer {
+  display: flex;
+  align-items: center;
+  padding: 5px 12px 7px;
+  background: #ebebed;
+  border-top: 1px solid #dddde0;
+}
+
+.file-gen-result {
+  font-size: 0.7rem;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+.file-gen-result.result-ok { color: #1e7e45; }
+.file-gen-result.result-err { color: #e05c57; }
+
+:root[data-theme="dark"] .file-gen-footer {
+  background: #2a2a2c;
+  border-top-color: #3a3a3c;
+}
+
+:root[data-theme="dark"] .file-gen-result.result-ok { color: #4caf7d; }
+:root[data-theme="dark"] .file-gen-result.result-err { color: #c0534f; }
+
+:root[data-theme="dark"] .file-gen-panel {
+  background: #1e1e20;
+  border-color: #3a3a3c;
+}
+
+:root[data-theme="dark"] .file-gen-header {
+  background: #2a2a2c;
+  border-bottom-color: #3a3a3c;
+}
+
+:root[data-theme="dark"] .file-gen-icon {
+  color: #666;
+}
+
+:root[data-theme="dark"] .file-gen-path {
+  color: #999;
+}
+
+:root[data-theme="dark"] .file-gen-badge {
+  color: #666;
+}
+
+:root[data-theme="dark"] .file-gen-body::-webkit-scrollbar-thumb {
+  background: #444;
+}
+
+:root[data-theme="dark"] .file-gen-code {
+  color: #e0e0e0;
 }
 
 /* ---- Shell Panel ---- */
@@ -756,6 +990,11 @@ const execOutput = computed(() => {
 
 :root[data-theme="dark"] .shell-exit-code.exit-ok  { color: #4caf7d; }
 :root[data-theme="dark"] .shell-exit-code.exit-err { color: #c0534f; }
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+  color: #4caf7d;
+}
 
 @keyframes blink {
   50% { opacity: 0; }

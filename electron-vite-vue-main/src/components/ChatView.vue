@@ -16,15 +16,15 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   streamingChange: [streaming: boolean]
+  titleChange: [title: string]
 }>()
 
 interface ToolCallInfo {
   id: string
   name: string
   arguments: string
-  status: 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
+  status: 'streaming' | 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
   result?: string
-  screenshot?: string
   streamOutput?: string
 }
 
@@ -63,7 +63,7 @@ const currentModel = ref('')
 const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
 const errorMsg = ref('')
-const chatMode = ref<ChatMode>('agent')
+const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
 const modeDropdownOpen = ref(false)
 const modelSelectorOpen = ref(false)
 const debugMode = ref(true)
@@ -264,7 +264,6 @@ async function loadMessages() {
         arguments: tc.arguments,
         status: tc.status as ToolCallInfo['status'],
         result: tc.result,
-        screenshot: tc.screenshot,
       }))
     }
     messages.push(msg)
@@ -286,7 +285,6 @@ function scheduleSave() {
           arguments: tc.arguments,
           status: tc.status,
           result: tc.result,
-          screenshot: tc.screenshot,
         }))
       }
       return stored
@@ -410,13 +408,38 @@ function sendAgentMessage(text: string) {
     }
   })
 
+  const offToolCallStreaming = window.agentChat.onToolCallStreaming(({ requestId: rid, index, id, name, argumentsDelta }) => {
+    if (rid !== requestId) return
+    const msg = getLastAssistant()
+    if (msg) {
+      if (msg.reasoning) setTimeout(() => { msg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
+      if (!msg.toolCalls) msg.toolCalls = []
+      while (msg.toolCalls.length <= index) {
+        msg.toolCalls.push({ id: '', name: '', arguments: '', status: 'streaming' })
+      }
+      const tc = msg.toolCalls[index]
+      if (id) tc.id = id
+      if (name) tc.name = name
+      if (argumentsDelta) tc.arguments += argumentsDelta
+      if (tc.status !== 'streaming') tc.status = 'streaming'
+      scrollToBottom()
+    }
+  })
+
   const offToolPending = window.agentChat.onToolPending(({ requestId: rid, toolCallId, name, arguments: args, autoApprove }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
       if (msg.reasoning) setTimeout(() => { msg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
       if (!msg.toolCalls) msg.toolCalls = []
-      msg.toolCalls.push({ id: toolCallId, name, arguments: args, status: autoApprove ? 'running' : 'pending' })
+      const existing = msg.toolCalls.find(t => t.id === toolCallId && t.status === 'streaming')
+      if (existing) {
+        existing.name = name
+        existing.arguments = args
+        existing.status = autoApprove ? 'running' : 'pending'
+      } else {
+        msg.toolCalls.push({ id: toolCallId, name, arguments: args, status: autoApprove ? 'running' : 'pending' })
+      }
       scrollToBottom()
     }
   })
@@ -441,7 +464,7 @@ function sendAgentMessage(text: string) {
     }
   })
 
-  const offToolResult = window.agentChat.onToolResult(({ requestId: rid, toolCallId, result, rejected, screenshot }) => {
+  const offToolResult = window.agentChat.onToolResult(({ requestId: rid, toolCallId, result, rejected }) => {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     const tc = msg?.toolCalls?.find((t) => t.id === toolCallId)
@@ -449,7 +472,6 @@ function sendAgentMessage(text: string) {
       tc.status = rejected ? 'rejected' : 'completed'
       tc.result = result
       tc.streamOutput = undefined
-      if (screenshot) tc.screenshot = screenshot
       scrollToBottom()
     }
   })
@@ -482,6 +504,7 @@ function sendAgentMessage(text: string) {
   function cleanup() {
     offReasoning()
     offChunk()
+    offToolCallStreaming()
     offToolPending()
     offToolRunning()
     offToolOutputStream()
@@ -512,6 +535,7 @@ async function sendMessage() {
       ? (text.length > 30 ? text.slice(0, 30) + '...' : text)
       : `图片消息 (${images?.length || 0}张)`
     window.conversationApi.rename(props.conversationId, title)
+    emit('titleChange', title)
   }
 
   inputText.value = ''
@@ -568,6 +592,7 @@ function autoResize(e: Event) {
 function selectMode(mode: ChatMode) {
   chatMode.value = mode
   modeDropdownOpen.value = false
+  localStorage.setItem('chatMode', mode)
   inputEl.value?.focus()
 }
 
@@ -635,10 +660,11 @@ onUnmounted(() => {
   }
 })
 
-async function sendWithContent(text: string, images?: string[], providerId?: string, model?: string) {
+async function sendWithContent(text: string, images?: string[], providerId?: string, model?: string, mode?: ChatMode) {
   if (loadMessagesPromise) await loadMessagesPromise
   if (providerId) activeProviderId.value = providerId
   if (model) currentModel.value = model
+  if (mode) chatMode.value = mode
   if (images?.length) await addImages(images)
   inputText.value = text
   await nextTick()
@@ -781,7 +807,6 @@ defineExpose({ loadConfig, sendWithContent })
               :arguments="tc.arguments"
               :status="tc.status"
               :result="tc.result"
-              :screenshot="tc.screenshot"
               :stream-output="tc.streamOutput"
               @confirm="confirmTool(tc.id)"
               @reject="rejectTool(tc.id)"
@@ -790,7 +815,7 @@ defineExpose({ loadConfig, sendWithContent })
           </template>
 
           <!-- Streaming cursor -->
-          <span v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.toolCalls?.some(t => t.status === 'pending' || t.status === 'running')" class="cursor-blink">▍</span>
+          <span v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.toolCalls?.some(t => t.status === 'streaming' || t.status === 'pending' || t.status === 'running')" class="cursor-blink">▍</span>
         </div>
       </div>
     </div>
@@ -922,7 +947,7 @@ defineExpose({ loadConfig, sendWithContent })
   position: relative;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   background: var(--c-base);
   color: var(--c-text);
 }
@@ -930,7 +955,7 @@ defineExpose({ loadConfig, sendWithContent })
 .chat-topbar {
   display: flex;
   align-items: center;
-  padding: 12px 56px 12px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--c-surface0);
   gap: 8px;
   min-height: 46px;

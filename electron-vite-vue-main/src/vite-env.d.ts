@@ -19,6 +19,7 @@ interface AiChatConfig {
   activeProviderId: string
   activeModel: string
   maxIterations: number
+  autoApproveAll: boolean
 }
 
 interface AiChatApi {
@@ -43,10 +44,11 @@ interface AgentChatApi {
   killCommand(toolCallId: string): void
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
+  onToolCallStreaming(callback: (data: { requestId: string; index: number; id: string; name: string; argumentsDelta: string }) => void): () => void
   onToolPending(callback: (data: { requestId: string; toolCallId: string; name: string; arguments: string; autoApprove: boolean }) => void): () => void
   onToolRunning(callback: (data: { requestId: string; toolCallId: string }) => void): () => void
   onToolOutputStream(callback: (data: { requestId: string; toolCallId: string; chunk: string }) => void): () => void
-  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean; screenshot?: string }) => void): () => void
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void): () => void
   onNewTurn(callback: (data: { requestId: string }) => void): () => void
   onDone(callback: (data: { requestId: string }) => void): () => void
   onError(callback: (data: { requestId: string; message: string }) => void): () => void
@@ -55,6 +57,7 @@ interface AgentChatApi {
 interface DialogApi {
   selectDirectory(): Promise<string | null>
   selectImages(): Promise<string[]>
+  selectFiles(defaultPath?: string): Promise<string[]>
 }
 
 interface ProjectData {
@@ -75,6 +78,7 @@ interface ProjectApi {
   list(): Promise<ProjectData[]>
   add(folderPath: string): Promise<ProjectData | null>
   remove(projectId: string): Promise<void>
+  rename(projectId: string, newName: string): Promise<void>
   checkPath(folderPath: string): Promise<boolean>
 }
 
@@ -84,7 +88,6 @@ interface StoredToolCall {
   arguments: string
   status: string
   result?: string
-  screenshot?: string
 }
 
 interface StoredMessage {
@@ -122,8 +125,29 @@ interface FileEntry {
   isDirectory: boolean
 }
 
+interface SkillInfo {
+  name: string
+  description: string
+  path: string
+  builtin: boolean
+  enabled: boolean
+}
+
+interface SkillsApi {
+  list(): Promise<SkillInfo[]>
+  toggle(name: string): Promise<void>
+  importSkill(): Promise<{ success: boolean; error?: string }>
+}
+
 interface FsApi {
   readDir(dirPath: string): Promise<FileEntry[]>
+  deletePath(targetPath: string): Promise<{ error?: string }>
+  showInFolder(fullPath: string): Promise<void>
+  watchDir(dirPath: string): Promise<void>
+  unwatchDir(dirPath: string): Promise<void>
+  onDirChanged(callback: (data: { dirPath: string }) => void): () => void
+  readFile(filePath: string): Promise<{ content: string; error?: string }>
+  writeFile(filePath: string, content: string): Promise<{ error?: string }>
 }
 
 interface Window {
@@ -133,5 +157,6 @@ interface Window {
   dialogApi: DialogApi
   projectApi: ProjectApi
   conversationApi: ConversationApi
+  skillsApi: SkillsApi
   fsApi: FsApi
 }

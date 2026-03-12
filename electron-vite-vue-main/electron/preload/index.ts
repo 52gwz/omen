@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('aiChat', {
   getConfig() {
     return ipcRenderer.invoke('ai:get-config')
   },
-  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; maxIterations: number }) {
+  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; maxIterations: number; autoApproveAll: boolean }) {
     return ipcRenderer.invoke('ai:save-config', config)
   },
   setActive(providerId: string, model: string) {
@@ -87,6 +87,11 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:stream-chunk', handler)
     return () => { ipcRenderer.off('agent:stream-chunk', handler) }
   },
+  onToolCallStreaming(callback: (data: { requestId: string; index: number; id: string; name: string; argumentsDelta: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:tool-call-streaming', handler)
+    return () => { ipcRenderer.off('agent:tool-call-streaming', handler) }
+  },
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:stream-reasoning', handler)
@@ -102,7 +107,7 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:tool-running', handler)
     return () => { ipcRenderer.off('agent:tool-running', handler) }
   },
-  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean; screenshot?: string }) => void) {
+  onToolResult(callback: (data: { requestId: string; toolCallId: string; result: string; rejected: boolean }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:tool-result', handler)
     return () => { ipcRenderer.off('agent:tool-result', handler) }
@@ -137,6 +142,9 @@ contextBridge.exposeInMainWorld('dialogApi', {
   selectImages(): Promise<string[]> {
     return ipcRenderer.invoke('dialog:select-images')
   },
+  selectFiles(defaultPath?: string): Promise<string[]> {
+    return ipcRenderer.invoke('dialog:select-files', defaultPath)
+  },
 })
 
 // --------- Project & Conversation API ---------
@@ -149,6 +157,9 @@ contextBridge.exposeInMainWorld('projectApi', {
   },
   remove(projectId: string): Promise<void> {
     return ipcRenderer.invoke('project:remove', projectId)
+  },
+  rename(projectId: string, newName: string): Promise<void> {
+    return ipcRenderer.invoke('project:rename', projectId, newName)
   },
   checkPath(folderPath: string): Promise<boolean> {
     return ipcRenderer.invoke('project:check-path', folderPath)
@@ -182,10 +193,46 @@ contextBridge.exposeInMainWorld('conversationApi', {
   },
 })
 
+// --------- Skills API ---------
+contextBridge.exposeInMainWorld('skillsApi', {
+  list(): Promise<{ name: string; description: string; path: string; builtin: boolean; enabled: boolean }[]> {
+    return ipcRenderer.invoke('skills:list')
+  },
+  toggle(name: string): Promise<void> {
+    return ipcRenderer.invoke('skills:toggle', name)
+  },
+  importSkill(): Promise<{ success: boolean; error?: string }> {
+    return ipcRenderer.invoke('skills:import')
+  },
+})
+
 // --------- Filesystem API ---------
 contextBridge.exposeInMainWorld('fsApi', {
   readDir(dirPath: string): Promise<{ name: string; path: string; isDirectory: boolean }[]> {
     return ipcRenderer.invoke('fs:read-dir', dirPath)
+  },
+  deletePath(targetPath: string): Promise<{ error?: string }> {
+    return ipcRenderer.invoke('fs:delete-path', targetPath)
+  },
+  showInFolder(fullPath: string): Promise<void> {
+    return ipcRenderer.invoke('fs:show-in-folder', fullPath)
+  },
+  watchDir(dirPath: string): Promise<void> {
+    return ipcRenderer.invoke('fs:watch-dir', dirPath)
+  },
+  unwatchDir(dirPath: string): Promise<void> {
+    return ipcRenderer.invoke('fs:unwatch-dir', dirPath)
+  },
+  onDirChanged(callback: (data: { dirPath: string }) => void): () => void {
+    const handler = (_: any, data: { dirPath: string }) => callback(data)
+    ipcRenderer.on('fs:dir-changed', handler)
+    return () => { ipcRenderer.off('fs:dir-changed', handler) }
+  },
+  readFile(filePath: string): Promise<{ content: string; error?: string }> {
+    return ipcRenderer.invoke('fs:read-file', filePath)
+  },
+  writeFile(filePath: string, content: string): Promise<{ error?: string }> {
+    return ipcRenderer.invoke('fs:write-file', filePath, content)
   },
 })
 

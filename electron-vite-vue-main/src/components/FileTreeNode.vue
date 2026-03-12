@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject } from 'vue'
+import { inject, ref, onMounted, onUnmounted } from 'vue'
 
 defineProps<{
   entries: FileEntry[]
@@ -9,6 +9,60 @@ defineProps<{
 const expandedDirs = inject<Set<string>>('fileTree:expandedDirs')!
 const dirChildren = inject<Record<string, FileEntry[]>>('fileTree:dirChildren')!
 const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
+const openFile = inject<(path: string) => void>('fileTree:openFile')!
+const previewHtmlFile = inject<(path: string) => void>('fileTree:previewHtml')!
+
+const ctxMenu = ref<{ visible: boolean; x: number; y: number; path: string; name: string; isDirectory: boolean }>({
+  visible: false, x: 0, y: 0, path: '', name: '', isDirectory: false,
+})
+
+function onFileContext(e: MouseEvent, entry: FileEntry) {
+  e.preventDefault()
+  e.stopPropagation()
+  ctxMenu.value = {
+    visible: true,
+    x: e.clientX,
+    y: e.clientY,
+    path: entry.path,
+    name: entry.name,
+    isDirectory: entry.isDirectory,
+  }
+}
+
+function closeCtxMenu() {
+  ctxMenu.value.visible = false
+}
+
+function showInFolder() {
+  window.fsApi.showInFolder(ctxMenu.value.path)
+  closeCtxMenu()
+}
+
+function isHtmlFile(filePath: string) {
+  const lower = filePath.toLowerCase()
+  return lower.endsWith('.html') || lower.endsWith('.htm')
+}
+
+function previewHtml() {
+  previewHtmlFile(ctxMenu.value.path)
+  closeCtxMenu()
+}
+
+async function deletePath() {
+  const { path, name, isDirectory } = ctxMenu.value
+  const confirmed = window.confirm(`确认将${isDirectory ? '文件夹' : '文件'}“${name}”移到回收站？`)
+  if (!confirmed) return
+
+  const { error } = await window.fsApi.deletePath(path)
+  closeCtxMenu()
+
+  if (error) {
+    window.alert(`删除失败：${error}`)
+  }
+}
+
+onMounted(() => document.addEventListener('click', closeCtxMenu))
+onUnmounted(() => document.removeEventListener('click', closeCtxMenu))
 </script>
 
 <template>
@@ -17,7 +71,8 @@ const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
       class="file-item"
       :class="{ 'is-dir': entry.isDirectory }"
       :style="{ paddingLeft: 8 + (depth || 0) * 14 + 'px' }"
-      @click="entry.isDirectory && toggleDir(entry.path)"
+      @click="entry.isDirectory ? toggleDir(entry.path) : openFile(entry.path)"
+      @contextmenu="onFileContext($event, entry)"
     >
       <template v-if="entry.isDirectory">
         <svg
@@ -47,6 +102,18 @@ const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
       :depth="(depth || 0) + 1"
     />
   </template>
+
+  <Teleport to="body">
+    <div
+      v-if="ctxMenu.visible"
+      class="file-ctx-menu"
+      :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+    >
+      <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">预览</button>
+      <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
+      <button @click="showInFolder">在文件管理器中显示</button>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -55,7 +122,7 @@ const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
   align-items: center;
   gap: 4px;
   padding: 3px 10px 3px 8px;
-  cursor: default;
+  cursor: pointer;
   border-radius: 5px;
   margin: 0 4px;
   font-size: 0.78rem;
@@ -63,10 +130,6 @@ const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
   transition: background 0.12s;
   white-space: nowrap;
   overflow: hidden;
-}
-
-.file-item.is-dir {
-  cursor: pointer;
 }
 
 .file-item:hover {
@@ -101,5 +164,39 @@ const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-ctx-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-surface1);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 20px var(--c-shadow-heavy);
+  min-width: 140px;
+}
+
+.file-ctx-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 12px;
+  background: none;
+  border: none;
+  color: var(--c-text);
+  font-size: 0.82rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 5px;
+  font-family: inherit;
+  transition: background 0.12s;
+}
+
+.file-ctx-menu button:hover {
+  background: var(--c-surface0);
+}
+
+.file-ctx-menu button.danger {
+  color: var(--c-red, #d20f39);
 }
 </style>

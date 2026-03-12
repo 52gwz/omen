@@ -1,7 +1,8 @@
 import type { WebContents } from 'electron'
 import { ipcMain } from 'electron'
-import { toolDefinitions, executeTool, type ToolResult, type ToolExecOptions } from './tools'
+import { toolDefinitions, executeTool, type ToolExecOptions } from './tools'
 import { buildSystemPrompt } from './system-prompt'
+import { loadSkills } from './skills'
 
 type MessageContent =
   | string
@@ -37,7 +38,9 @@ interface AgentRunParams {
   cwd: string
   sender: WebContents
   maxIterations: number
+  autoApproveAll?: boolean
   signal?: AbortSignal
+  disabledSkills?: string[]
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -144,6 +147,18 @@ async function streamOnce(params: {
 
         if (delta.tool_calls) {
           accumulateToolCalls(toolCallAccum, delta.tool_calls)
+          for (const d of delta.tool_calls) {
+            const tc = toolCallAccum.get(d.index)
+            if (tc) {
+              sender.send('agent:tool-call-streaming', {
+                requestId,
+                index: d.index,
+                id: tc.id,
+                name: tc.function.name,
+                argumentsDelta: d.function?.arguments || '',
+              })
+            }
+          }
         }
       } catch { /* skip malformed JSON */ }
     }
@@ -157,11 +172,6 @@ const SAFE_TOOLS = new Set([
   'read_file',
   'list_directory',
   'grep_search',
-  'browser_navigate',
-  'browser_screenshot',
-  'browser_get_text',
-  'browser_scroll',
-  'browser_close',
 ])
 
 const SAFE_COMMANDS = new Set([
@@ -217,10 +227,13 @@ function waitForConfirmation(requestId: string, toolCallId: string, signal?: Abo
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, signal } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [] } = params
+
+  const skills = await loadSkills(disabledSkills)
+  const enabledSkills = skills.filter(s => s.enabled)
 
   const allMessages: Message[] = [
-    { role: 'system', content: buildSystemPrompt(cwd) },
+    { role: 'system', content: buildSystemPrompt(cwd, enabledSkills) },
     ...params.messages.map((m): Message => ({ role: m.role, content: m.content })),
   ]
 
@@ -261,7 +274,8 @@ export async function runAgentLoop(params: AgentRunParams) {
         args = {}
       }
 
-      const isSafe = SAFE_TOOLS.has(tc.function.name)
+      const isSafe = autoApproveAll
+        || SAFE_TOOLS.has(tc.function.name)
         || (tc.function.name === 'exec_command' && isExecCommandSafe(args))
 
       sender.send('agent:tool-pending', {
@@ -306,19 +320,11 @@ export async function runAgentLoop(params: AgentRunParams) {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },
       }
-      const toolResult: ToolResult = await executeTool(tc.function.name, args, cwd, execOptions)
-
-      let toolContent: MessageContent = toolResult.content
-      if (toolResult.screenshot) {
-        toolContent = [
-          { type: 'text', text: toolResult.content },
-          { type: 'image_url', image_url: { url: `data:image/png;base64,${toolResult.screenshot}` } },
-        ]
-      }
+      const toolResult = await executeTool(tc.function.name, args, cwd, execOptions)
 
       const toolMsg: Message = {
         role: 'tool',
-        content: toolContent,
+        content: toolResult.content,
         tool_call_id: tc.id,
       }
       allMessages.push(toolMsg)
@@ -328,7 +334,6 @@ export async function runAgentLoop(params: AgentRunParams) {
         toolCallId: tc.id,
         result: toolResult.content,
         rejected: false,
-        screenshot: toolResult.screenshot,
       })
     }
 

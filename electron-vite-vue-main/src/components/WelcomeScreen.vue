@@ -14,6 +14,12 @@ const modelSelectorOpen = ref(false)
 const modelSelectorRef = ref<HTMLElement>()
 const pendingImages = reactive<string[]>([])
 
+type ChatMode = 'chat' | 'agent'
+const modeLabels: Record<ChatMode, string> = { chat: '对话', agent: 'Agent' }
+const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
+const modeDropdownOpen = ref(false)
+const modeDropdownRef = ref<HTMLElement>()
+
 const canSend = computed(() =>
   (inputText.value.trim() || pendingImages.length > 0) && !!currentModel.value
 )
@@ -24,7 +30,7 @@ const activeProviderName = computed(() => {
 })
 
 const emit = defineEmits<{
-  send: [payload: { text: string; images?: string[]; providerId: string; model: string }]
+  send: [payload: { text: string; images?: string[]; providerId: string; model: string; mode: ChatMode }]
 }>()
 
 async function loadConfig() {
@@ -62,6 +68,7 @@ async function selectImages() {
 function removePendingImage(index: number) {
   pendingImages.splice(index, 1)
 }
+
 
 function handlePaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
@@ -114,9 +121,15 @@ function submit() {
   if (!text && pendingImages.length === 0) return
   if (!currentModel.value) return
   const images = pendingImages.length > 0 ? [...pendingImages] : undefined
-  emit('send', { text, images, providerId: activeProviderId.value, model: currentModel.value })
+  emit('send', { text, images, providerId: activeProviderId.value, model: currentModel.value, mode: chatMode.value })
   inputText.value = ''
   pendingImages.splice(0)
+}
+
+function selectMode(mode: ChatMode) {
+  chatMode.value = mode
+  modeDropdownOpen.value = false
+  localStorage.setItem('chatMode', mode)
 }
 
 function autoResize(e: Event) {
@@ -128,6 +141,9 @@ function autoResize(e: Event) {
 function handleClickOutside(e: MouseEvent) {
   if (modelSelectorRef.value && !modelSelectorRef.value.contains(e.target as Node)) {
     modelSelectorOpen.value = false
+  }
+  if (modeDropdownRef.value && !modeDropdownRef.value.contains(e.target as Node)) {
+    modeDropdownOpen.value = false
   }
 }
 
@@ -190,6 +206,38 @@ onUnmounted(() => {
 
         <div class="card-toolbar">
           <div class="toolbar-left">
+            <div ref="modeDropdownRef" class="welcome-mode-dropdown">
+              <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
+                <span class="mode-dot" :class="chatMode"></span>
+                {{ modeLabels[chatMode] }}
+                <svg
+                  class="mode-chevron"
+                  :class="{ open: modeDropdownOpen }"
+                  width="11" height="11" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              <Transition name="dropdown">
+                <div v-if="modeDropdownOpen" class="mode-menu">
+                  <button
+                    v-for="m in (['chat', 'agent'] as ChatMode[])"
+                    :key="m"
+                    class="mode-option"
+                    :class="{ active: chatMode === m }"
+                    @click="selectMode(m)"
+                  >
+                    <span class="mode-dot" :class="m"></span>
+                    <span>{{ modeLabels[m] }}</span>
+                    <svg v-if="chatMode === m" class="check-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </button>
+                </div>
+              </Transition>
+            </div>
             <button class="toolbar-icon-btn" title="添加图片" @click="selectImages">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -628,6 +676,100 @@ onUnmounted(() => {
 .send-circle-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* -- Mode dropdown -- */
+.welcome-mode-dropdown {
+  position: relative;
+}
+
+.mode-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 4px 10px;
+  height: 34px;
+  color: var(--c-subtext0);
+  font-size: 0.82rem;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+  user-select: none;
+}
+
+.mode-trigger:hover {
+  background: var(--c-surface0);
+  border-color: var(--c-surface1);
+}
+
+.mode-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mode-dot.chat {
+  background: var(--c-blue);
+}
+
+.mode-dot.agent {
+  background: var(--c-green);
+}
+
+.mode-chevron {
+  color: var(--c-overlay0);
+  transition: transform 0.2s ease;
+}
+
+.mode-chevron.open {
+  transform: rotate(180deg);
+}
+
+.mode-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 140px;
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-surface1);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 8px 24px var(--c-shadow-heavy);
+  z-index: 100;
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--c-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.mode-option:hover {
+  background: var(--c-surface-hover);
+}
+
+.mode-option.active {
+  background: var(--c-surface0);
+}
+
+.check-icon {
+  margin-left: auto;
+  color: var(--c-blue);
 }
 
 /* Dropdown transition */

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>扫码点餐后台</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: sans-serif; font-size: 14px; }
+.layout { display: flex; min-height: 100vh; }
+.sidebar { width: 180px; border-right: 2px solid #333; padding: 16px; }
+.sidebar-item { border: 1px solid #333; padding: 10px; margin-bottom: 8px; }
+.main { flex: 1; display: flex; flex-direction: column; }
+.header { border-bottom: 2px solid #333; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+.header-title { border: 1px solid #333; padding: 8px 16px; }
+.header-user { border: 1px solid #333; padding: 8px 16px; }
+.content { flex: 1; padding: 24px; }
+.content-header { display: flex; justify-content: space-between; margin-bottom: 20px; }
+.content-title { border: 1px solid #333; padding: 8px 16px; }
+.content-actions { display: flex; gap: 8px; }
+.btn { border: 1px solid #333; padding: 8px 16px; background: none; cursor: pointer; }
+.card { border: 1px solid #333; padding: 16px; margin-bottom: 16px; }
+.stats-row { display: flex; gap: 16px; margin-bottom: 20px; }
+.stat-box { border: 1px solid #333; padding: 20px; flex: 1; }
+.stat-label { border: 1px solid #999; padding: 4px 8px; display: inline-block; margin-bottom: 8px; }
+.stat-value { font-size: 24px; }
+.table-wrap { border: 1px solid #333; overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #333; padding: 12px; text-align: left; }
+.img-placeholder { background: #ddd; border: 1px dashed #666; min-height: 60px; }
+.tabs { display: flex; border-bottom: 1px solid #333; margin-bottom: 16px; }
+.tab { border: 1px solid #333; border-bottom: none; padding: 10px 20px; margin-bottom: -1px; }
+.tab.active { border-width: 2px; }
+.form-row { display: flex; gap: 16px; margin-bottom: 12px; }
+.form-group { flex: 1; }
+.form-group label { display: block; margin-bottom: 4px; border: 1px solid #999; padding: 4px; width: fit-content; }
+.form-group input, .form-group select { border: 1px solid #333; padding: 8px; width: 100%; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-item">仪表盘</div>
+    <div class="sidebar-item">订单管理</div>
+    <div class="sidebar-item">菜品管理</div>
+    <div class="sidebar-item">桌台管理</div>
+    <div class="sidebar-item">扫码统计</div>
+    <div class="sidebar-item">系统设置</div>
+  </aside>
+  <main class="main">
+    <header class="header">
+      <div class="header-title">扫码点餐后台</div>
+      <div class="header-user">管理员</div>
+    </header>
+    <div class="content">
+      <div class="content-header">
+        <div class="content-title">订单管理</div>
+        <div class="content-actions">
+          <button class="btn">导出</button>
+          <button class="btn">刷新</button>
+        </div>
+      </div>
+      <div class="stats-row">
+        <div class="stat-box">
+          <div class="stat-label">今日订单</div>
+          <div class="stat-value">128</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">进行中</div>
+          <div class="stat-value">12</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">已完成</div>
+          <div class="stat-value">98</div>
+        </div>
+      </div>
+      <div class="tabs">
+        <div class="tab active">全部订单</div>
+        <div class="tab">待处理</div>
+        <div class="tab">已完成</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>订单号</th>
+              <th>桌号</th>
+              <th>金额</th>
+              <th>状态</th>
+              <th>时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>ORD20250310001</td>
+              <td>A-01</td>
+              <td>￥128</td>
+              <td>进行中</td>
+              <td>14:32</td>
+              <td><button class="btn">详情</button></td>
+            </tr>
+            <tr>
+              <td>ORD20250310002</td>
+              <td>B-03</td>
+              <td>￥256</td>
+              <td>已完成</td>
+              <td>14:28</td>
+              <td><button class="btn">详情</button></td>
+            </tr>
+            <tr>
+              <td>ORD20250310003</td>
+              <td>A-05</td>
+              <td>￥89</td>
+              <td>待支付</td>
+              <td>14:25</td>
+              <td><button class="btn">详情</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card" style="margin-top: 24px;">
+        <div class="content-title" style="margin-bottom: 16px;">新增菜品</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>菜品名称</label>
+            <input type="text">
+          </div>
+          <div class="form-group">
+            <label>分类</label>
+            <select><option>主食</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>价格</label>
+            <input type="text">
+          </div>
+          <div class="form-group">
+            <label>图片</label>
+            <div class="img-placeholder"></div>
+          </div>
+        </div>
+        <button class="btn" style="margin-top: 12px;">保存</button>
+      </div>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, provide, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import FileTreeNode from './FileTreeNode.vue'
 
@@ -12,12 +12,16 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  selectConversation: [convId: string]
+  selectConversation: [convId: string, title: string]
   noSelection: []
   deleteConversation: [convId: string]
   openProject: [project: ProjectData]
   closeProject: []
   createTask: []
+  renameProject: [projectId: string, newName: string]
+  openSkills: []
+  openFile: [filePath: string]
+  previewHtml: [filePath: string]
 }>()
 
 const { theme, toggleTheme } = useTheme()
@@ -36,9 +40,46 @@ const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: stri
   visible: false, x: 0, y: 0, targetId: '', type: 'conv',
 })
 
+function openSkillsTab() {
+  emit('openSkills')
+}
+
+const editingProjectName = ref(false)
+const editProjectNameValue = ref('')
+const editProjectNameInput = ref<HTMLInputElement>()
+
+function startEditProjectName() {
+  editProjectNameValue.value = props.projectName || ''
+  editingProjectName.value = true
+  nextTick(() => editProjectNameInput.value?.select())
+}
+
+async function confirmEditProjectName() {
+  const name = editProjectNameValue.value.trim()
+  editingProjectName.value = false
+  if (!name || !props.projectId || name === props.projectName) return
+  await window.projectApi.rename(props.projectId, name)
+  emit('renameProject', props.projectId, name)
+}
+
+function cancelEditProjectName() {
+  editingProjectName.value = false
+}
+
+function onEditProjectNameKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    confirmEditProjectName()
+  } else if (e.key === 'Escape') {
+    cancelEditProjectName()
+  }
+}
+
 provide('fileTree:expandedDirs', expandedDirs)
 provide('fileTree:dirChildren', dirChildren)
 provide('fileTree:toggleDir', toggleDir)
+provide('fileTree:openFile', (filePath: string) => emit('openFile', filePath))
+provide('fileTree:previewHtml', (filePath: string) => emit('previewHtml', filePath))
 
 async function loadConversations() {
   const list = await window.conversationApi.list(props.projectId || null)
@@ -65,6 +106,45 @@ async function loadFileTree() {
   fileTree.push(...entries)
   expandedDirs.clear()
   for (const key in dirChildren) delete dirChildren[key]
+  startWatching()
+}
+
+async function refreshFileTree() {
+  if (!props.projectPath) return
+  const entries = await window.fsApi.readDir(props.projectPath)
+  fileTree.length = 0
+  fileTree.push(...entries)
+  for (const dirPath of [...expandedDirs]) {
+    try {
+      dirChildren[dirPath] = await window.fsApi.readDir(dirPath)
+    } catch {
+      expandedDirs.delete(dirPath)
+      delete dirChildren[dirPath]
+    }
+  }
+}
+
+let offDirChanged: (() => void) | null = null
+
+function startWatching() {
+  stopWatching()
+  if (!props.projectPath) return
+  window.fsApi.watchDir(props.projectPath)
+  offDirChanged = window.fsApi.onDirChanged((data) => {
+    if (props.projectPath && data.dirPath === props.projectPath) {
+      refreshFileTree()
+    }
+  })
+}
+
+function stopWatching() {
+  if (offDirChanged) {
+    offDirChanged()
+    offDirChanged = null
+  }
+  if (props.projectPath) {
+    window.fsApi.unwatchDir(props.projectPath)
+  }
 }
 
 async function toggleDir(dirPath: string) {
@@ -107,7 +187,8 @@ async function deleteProject(projectId: string) {
 function selectConv(convId: string) {
   activeConvId.value = convId
   isHomeActive.value = false
-  emit('selectConversation', convId)
+  const conv = conversations.find(c => c.id === convId)
+  emit('selectConversation', convId, conv?.title || '对话')
 }
 
 function onConvContext(e: MouseEvent, convId: string) {
@@ -148,9 +229,15 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('click', closeContextMenu)
+  stopWatching()
 })
 
-defineExpose({ loadConversations })
+function setActiveConv(convId: string) {
+  activeConvId.value = convId
+  isHomeActive.value = !convId
+}
+
+defineExpose({ loadConversations, setActiveConv })
 </script>
 
 <template>
@@ -164,11 +251,20 @@ defineExpose({ loadConversations })
             <polyline points="15 18 9 12 15 6" />
           </svg>
         </button>
-        <div class="sidebar-project-title">
+        <div class="sidebar-project-title" @click="!editingProjectName && startEditProjectName()">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          <span class="sidebar-title">{{ projectName || '项目' }}</span>
+          <input
+            v-if="editingProjectName"
+            ref="editProjectNameInput"
+            v-model="editProjectNameValue"
+            class="project-name-input"
+            @blur="confirmEditProjectName"
+            @keydown="onEditProjectNameKeydown"
+            @click.stop
+          />
+          <span v-else class="sidebar-title editable">{{ projectName || '项目' }}</span>
         </div>
       </template>
       <!-- 普通模式 -->
@@ -210,6 +306,15 @@ defineExpose({ loadConversations })
           <span>发起对话</span>
         </button>
 
+        <div class="skills-wrapper">
+          <button class="skills-btn" @click="openSkillsTab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            <span>技能</span>
+          </button>
+        </div>
+
         <div class="section-header" @click="projectsExpanded = !projectsExpanded">
           <div class="section-header-left">
             <svg
@@ -221,10 +326,17 @@ defineExpose({ loadConversations })
             </svg>
             <span class="section-label">项目</span>
           </div>
-          <span class="section-count">{{ projects.length }}</span>
         </div>
 
         <div v-show="projectsExpanded" class="project-list">
+          <div class="project-item" @click="createProject">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+            <span class="project-name">创建项目</span>
+          </div>
           <div
             v-for="project in projects"
             :key="project.id"
@@ -237,15 +349,31 @@ defineExpose({ loadConversations })
             </svg>
             <span class="project-name">{{ project.name }}</span>
           </div>
-          <div v-if="!projects.length" class="section-empty">
-            <span>暂无项目</span>
-          </div>
         </div>
       </div>
 
     </template>
 
-    <!-- 项目模式：文件浏览器 -->
+    <!-- 项目模式：发起对话 + 文件浏览器 -->
+    <div v-if="projectId" class="projects-section">
+      <button class="new-chat-btn" @click="openHome">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        <span>发起对话</span>
+      </button>
+
+      <div class="skills-wrapper">
+        <button class="skills-btn" @click="openSkillsTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          </svg>
+          <span>技能</span>
+        </button>
+      </div>
+    </div>
+
     <div v-if="projectId" class="files-section">
       <div class="section-header" @click="filesExpanded = !filesExpanded">
         <div class="section-header-left">
@@ -282,7 +410,6 @@ defineExpose({ loadConversations })
           </svg>
           <span class="section-label">对话</span>
         </div>
-        <span class="section-count">{{ conversations.length }}</span>
       </div>
 
       <div v-show="conversationsExpanded" class="conversation-list">
@@ -379,6 +506,15 @@ defineExpose({ loadConversations })
   -webkit-app-region: no-drag;
   flex: 1;
   overflow: hidden;
+  cursor: pointer;
+  border-radius: 5px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  transition: background 0.15s;
+}
+
+.sidebar-project-title:hover {
+  background: var(--c-surface0);
 }
 
 .sidebar-project-title svg {
@@ -395,6 +531,25 @@ defineExpose({ loadConversations })
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-title.editable {
+  cursor: pointer;
+}
+
+.project-name-input {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--c-text);
+  letter-spacing: 0.5px;
+  background: var(--c-base);
+  border: 1px solid var(--c-blue, #1e66f5);
+  border-radius: 4px;
+  outline: none;
+  padding: 1px 4px;
+  font-family: inherit;
+  width: 100%;
+  min-width: 0;
 }
 
 .header-actions {
@@ -662,6 +817,42 @@ defineExpose({ loadConversations })
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* ---- Skills Section ---- */
+.skills-wrapper {
+  position: relative;
+  padding: 0 8px;
+  margin-bottom: 4px;
+}
+
+.skills-btn {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--c-subtext0);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.skills-btn:hover {
+  background: var(--c-surface0);
+  color: var(--c-text);
+}
+
+.skills-btn svg {
+  flex-shrink: 0;
+  color: var(--c-yellow, #df8e1d);
+}
+
 
 .ctx-menu {
   position: fixed;
