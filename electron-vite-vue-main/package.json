@@ -43,6 +43,7 @@
     "electron-store": "^11.0.2",
     "marked": "^17.0.3",
     "monaco-editor": "^0.55.1",
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "tributejs": "^5.1.3"
   }
 }

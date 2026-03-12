@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, reactive, ref, watch } from 'vue'
+import { computed, nextTick, provide, reactive, ref, watch } from 'vue'
 import ChatView from './components/ChatView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 import WorkspacePane from './components/WorkspacePane.vue'
 import { MIN_SPLIT_RATIO } from './types/workspace'
-import type { DragTabState, DropPosition, DropTarget, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
+import type { DragTabState, DropPosition, DropTarget, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
 
 const SKILLS_TAB_ID = '__skills__'
 const WEBVIEW_PREFIX = '__webview__:'
@@ -22,6 +22,12 @@ interface WelcomeSendPayload {
   providerId: string
   model: string
   mode: 'chat' | 'agent'
+}
+
+type DocumentWithViewTransition = Document & {
+  startViewTransition?: (update: () => void | Promise<void>) => {
+    finished: Promise<void>
+  }
 }
 
 const showSettings = ref(false)
@@ -515,17 +521,68 @@ function onSplitResizeEnd() {
   splitResizeActive.value = false
 }
 
-async function handleWelcomeSend(payload: WelcomeSendPayload) {
+const allOpenTabs = computed<MentionTab[]>(() => {
+  const result: MentionTab[] = []
+  const seen = new Set<string>()
+  for (const ctx of Object.values(tabContexts)) {
+    forEachPane(ctx.root, (pane) => {
+      for (const tab of pane.tabs) {
+        if (!tab.convId || seen.has(tab.convId)) continue
+        seen.add(tab.convId)
+        if (tab.convId.startsWith(EDITOR_PREFIX)) {
+          const fp = tab.convId.slice(EDITOR_PREFIX.length)
+          const filename = fp.replace(/\\/g, '/').split('/').pop() || fp
+          result.push({ key: filename, value: tab.convId, type: 'file' })
+        } else if (tab.convId.startsWith(WEBVIEW_PREFIX)) {
+          const url = tab.convId.slice(WEBVIEW_PREFIX.length)
+          const label = url.replace(/^https?:\/\//, '').split('/')[0] || url
+          result.push({ key: label, value: tab.convId, type: 'webview' })
+        }
+      }
+    })
+  }
+  return result
+})
+
+function openTabById(tabId: string) {
+  if (focusExistingTab(tabId)) return
+  if (tabId.startsWith(EDITOR_PREFIX)) {
+    onOpenFile(tabId.slice(EDITOR_PREFIX.length))
+  } else if (tabId.startsWith(WEBVIEW_PREFIX)) {
+    openWebView(tabId.slice(WEBVIEW_PREFIX.length))
+  }
+}
+
+provide('openTabs', allOpenTabs)
+provide('openTabById', openTabById)
+provide('appActiveConvId', activeConvId)
+
+async function openWelcomeConversation(payload: WelcomeSendPayload) {
   const meta = await window.conversationApi.create('新对话', activeProject.value?.id)
   const title = payload.text
     ? (payload.text.length > 30 ? payload.text.slice(0, 30) + '...' : payload.text)
     : '新对话'
   openConversationTab(meta.id, { title, reuseActiveEmptyTab: true })
-  await sidebarRef.value?.loadConversations()
+  sidebarRef.value?.loadConversations()
   await nextTick()
   const chatRef = chatRefs.value[meta.id]
   if (chatRef) {
     chatRef.sendWithContent(payload.text, payload.images, payload.providerId, payload.model, payload.mode)
+  }
+}
+
+async function handleWelcomeSend(payload: WelcomeSendPayload) {
+  const doc = document as DocumentWithViewTransition
+  if (!doc.startViewTransition) {
+    await openWelcomeConversation(payload)
+    return
+  }
+
+  try {
+    const transition = doc.startViewTransition(() => openWelcomeConversation(payload))
+    await transition.finished
+  } catch {
+    await openWelcomeConversation(payload)
   }
 }
 </script>
@@ -635,5 +692,15 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   color: var(--c-text);
   background: var(--c-surface0);
   border-color: var(--c-surface2);
+}
+
+:global(::view-transition-group(chat-composer)) {
+  z-index: 40;
+}
+
+:global(::view-transition-old(chat-composer)),
+:global(::view-transition-new(chat-composer)) {
+  animation-duration: 360ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 </style>

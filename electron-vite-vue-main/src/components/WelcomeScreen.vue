@@ -1,33 +1,23 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
+import ChatComposer from './ChatComposer.vue'
 
 const props = defineProps<{
   projectName?: string
 }>()
 
 const inputText = ref('')
-const inputEl = ref<HTMLTextAreaElement>()
 const currentModel = ref('')
 const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
-const modelSelectorOpen = ref(false)
-const modelSelectorRef = ref<HTMLElement>()
 const pendingImages = reactive<string[]>([])
 
 type ChatMode = 'chat' | 'agent'
-const modeLabels: Record<ChatMode, string> = { chat: '对话', agent: 'Agent' }
 const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
-const modeDropdownOpen = ref(false)
-const modeDropdownRef = ref<HTMLElement>()
 
 const canSend = computed(() =>
-  (inputText.value.trim() || pendingImages.length > 0) && !!currentModel.value
+  (Boolean(inputText.value.trim()) || pendingImages.length > 0) && !!currentModel.value
 )
-
-const activeProviderName = computed(() => {
-  const p = providers.value.find(p => p.id === activeProviderId.value)
-  return p?.name || ''
-})
 
 const emit = defineEmits<{
   send: [payload: { text: string; images?: string[]; providerId: string; model: string; mode: ChatMode }]
@@ -56,7 +46,6 @@ async function loadConfig() {
 async function selectProviderModel(providerId: string, model: string) {
   activeProviderId.value = providerId
   currentModel.value = model
-  modelSelectorOpen.value = false
   await window.aiChat.setActive(providerId, model)
 }
 
@@ -109,13 +98,6 @@ function handleDragOver(e: DragEvent) {
   e.preventDefault()
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault()
-    submit()
-  }
-}
-
 function submit() {
   const text = inputText.value.trim()
   if (!text && pendingImages.length === 0) return
@@ -128,23 +110,7 @@ function submit() {
 
 function selectMode(mode: ChatMode) {
   chatMode.value = mode
-  modeDropdownOpen.value = false
   localStorage.setItem('chatMode', mode)
-}
-
-function autoResize(e: Event) {
-  const el = e.target as HTMLTextAreaElement
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 200) + 'px'
-}
-
-function handleClickOutside(e: MouseEvent) {
-  if (modelSelectorRef.value && !modelSelectorRef.value.contains(e.target as Node)) {
-    modelSelectorOpen.value = false
-  }
-  if (modeDropdownRef.value && !modeDropdownRef.value.contains(e.target as Node)) {
-    modeDropdownOpen.value = false
-  }
 }
 
 const titleKey = ref(0)
@@ -152,11 +118,6 @@ watch(() => props.projectName, () => { titleKey.value++ })
 
 onMounted(() => {
   loadConfig()
-  document.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
 })
 </script>
 
@@ -180,129 +141,24 @@ onUnmounted(() => {
         </Transition>
       </div>
 
-      <div class="input-card">
-        <!-- Pending images -->
-        <div v-if="pendingImages.length" class="welcome-pending-images">
-          <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-img-item">
-            <img :src="img" class="pending-img-thumb" />
-            <button class="pending-img-remove" @click="removePendingImage(idx)" title="移除">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <textarea
-          ref="inputEl"
-          v-model="inputText"
-          class="welcome-textarea"
-          placeholder="描述你想要完成的任务..."
-          rows="5"
-          @keydown="handleKeydown"
-          @input="autoResize"
-          @paste="handlePaste"
-        />
-
-        <div class="card-toolbar">
-          <div class="toolbar-left">
-            <div ref="modeDropdownRef" class="welcome-mode-dropdown">
-              <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
-                <span class="mode-dot" :class="chatMode"></span>
-                {{ modeLabels[chatMode] }}
-                <svg
-                  class="mode-chevron"
-                  :class="{ open: modeDropdownOpen }"
-                  width="11" height="11" viewBox="0 0 24 24"
-                  fill="none" stroke="currentColor" stroke-width="2.5"
-                  stroke-linecap="round" stroke-linejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <Transition name="dropdown">
-                <div v-if="modeDropdownOpen" class="mode-menu">
-                  <button
-                    v-for="m in (['chat', 'agent'] as ChatMode[])"
-                    :key="m"
-                    class="mode-option"
-                    :class="{ active: chatMode === m }"
-                    @click="selectMode(m)"
-                  >
-                    <span class="mode-dot" :class="m"></span>
-                    <span>{{ modeLabels[m] }}</span>
-                    <svg v-if="chatMode === m" class="check-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  </button>
-                </div>
-              </Transition>
-            </div>
-            <button class="toolbar-icon-btn" title="添加图片" @click="selectImages">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
-            </button>
-          </div>
-
-          <div class="toolbar-right">
-            <!-- Model selector -->
-            <div ref="modelSelectorRef" class="welcome-model-selector">
-              <button class="model-selector-trigger" @click.stop="modelSelectorOpen = !modelSelectorOpen">
-                <span v-if="activeProviderName" class="provider-tag">{{ activeProviderName }}</span>
-                <span class="model-name">{{ currentModel || '未配置模型' }}</span>
-                <svg
-                  class="selector-chevron"
-                  :class="{ open: modelSelectorOpen }"
-                  width="11" height="11" viewBox="0 0 24 24"
-                  fill="none" stroke="currentColor" stroke-width="2.5"
-                  stroke-linecap="round" stroke-linejoin="round"
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              <Transition name="dropdown">
-                <div v-if="modelSelectorOpen" class="model-dropdown-menu">
-                  <div v-if="!providers.length" class="model-dropdown-empty">请先在设置中配置供应商</div>
-                  <template v-else>
-                    <div v-for="p in providers" :key="p.id" class="model-group">
-                      <div class="model-group-title">{{ p.name || '未命名' }}</div>
-                      <button
-                        v-for="m in p.models"
-                        :key="`${p.id}-${m}`"
-                        class="model-item"
-                        :class="{ active: activeProviderId === p.id && currentModel === m }"
-                        @click="selectProviderModel(p.id, m)"
-                      >
-                        <span>{{ m }}</span>
-                        <svg
-                          v-if="activeProviderId === p.id && currentModel === m"
-                          class="check-icon"
-                          width="13" height="13" viewBox="0 0 24 24"
-                          fill="none" stroke="currentColor" stroke-width="2.5"
-                          stroke-linecap="round" stroke-linejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </button>
-                      <div v-if="!p.models.length" class="model-no-models">暂无模型</div>
-                    </div>
-                  </template>
-                </div>
-              </Transition>
-            </div>
-
-            <button class="send-circle-btn" :disabled="!canSend" @click="submit">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="19" x2="12" y2="5" />
-                <polyline points="5 12 12 5 19 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
+      <ChatComposer
+        v-model="inputText"
+        variant="welcome"
+        view-transition-name="chat-composer"
+        :pending-images="pendingImages"
+        :providers="providers"
+        :active-provider-id="activeProviderId"
+        :current-model="currentModel"
+        :chat-mode="chatMode"
+        :can-send="canSend"
+        placeholder="描述你想要完成的任务..."
+        @send="submit"
+        @paste="handlePaste"
+        @select-images="selectImages"
+        @remove-image="removePendingImage"
+        @select-provider-model="({ providerId, model }) => selectProviderModel(providerId, model)"
+        @select-mode="selectMode"
+      />
     </div>
   </div>
 </template>

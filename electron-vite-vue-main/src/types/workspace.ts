@@ -42,3 +42,9 @@ export interface TabInsertTarget {
   paneId: string
   index: number
 }
+
+export interface MentionTab {
+  key: string
+  value: string
+  type: 'file' | 'webview'
+}

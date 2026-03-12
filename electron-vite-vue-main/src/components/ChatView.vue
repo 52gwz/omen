@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, inject, type Ref } from 'vue'
 import { marked } from 'marked'
+import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
 
 marked.setOptions({
@@ -54,7 +55,6 @@ function renderReasoning(raw: string): string {
 }
 
 type ChatMode = 'chat' | 'agent'
-const modeLabels: Record<ChatMode, string> = { chat: '聊天', agent: 'Agent' }
 
 const messages = reactive<ChatMessage[]>([])
 const inputText = ref('')
@@ -64,17 +64,13 @@ const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
 const errorMsg = ref('')
 const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
-const modeDropdownOpen = ref(false)
-const modelSelectorOpen = ref(false)
 const debugMode = ref(true)
 const debugPanelOpen = ref(false)
 const debugSelectedMsg = ref<number | null>(null)
 const debugCopied = ref(false)
 
 const messagesContainer = ref<HTMLElement>()
-const inputEl = ref<HTMLTextAreaElement>()
-const modeDropdownRef = ref<HTMLElement>()
-const modelSelectorRef = ref<HTMLElement>()
+const composerRef = ref<InstanceType<typeof ChatComposer>>()
 const reasoningContentRefs = new Map<number, HTMLElement>()
 
 const pendingImages = reactive<string[]>([])
@@ -96,14 +92,65 @@ let currentRequestId = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadMessagesPromise: Promise<void> | null = null
 
-const canSend = computed(() => (inputText.value.trim() || pendingImages.length > 0) && !isStreaming.value && !!currentModel.value)
+const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0) && !isStreaming.value && !!currentModel.value)
+
+const openTabById = inject<(tabId: string) => void>('openTabById', () => {})
+
+interface MentionTab {
+  key: string
+  value: string
+  type: 'file' | 'webview'
+}
+
+const openTabs = inject<Ref<MentionTab[]>>('openTabs', ref([]))
+const appActiveConvId = inject<Ref<string>>('appActiveConvId', ref(''))
+
+function buildTabContext(): string | null {
+  const tabs = openTabs.value
+  if (!tabs.length) return null
+
+  const parts: string[] = []
+
+  const activeId = appActiveConvId.value
+  if (activeId.startsWith('__editor__:')) {
+    parts.push(`当前用户正在编辑：${activeId.slice('__editor__:'.length)}`)
+  } else if (activeId.startsWith('__webview__:')) {
+    parts.push(`当前用户正在浏览：${activeId.slice('__webview__:'.length)}`)
+  }
+
+  const allLabels = tabs.map((t) =>
+    t.type === 'file' ? t.value.slice('__editor__:'.length) : t.value.slice('__webview__:'.length),
+  )
+  parts.push(`用户已打开的文件/网站：${allLabels.join('、')}`)
+
+  return parts.join('\n')
+}
+
+function renderUserContent(content: string): string {
+  const escaped = content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+  return escaped.replace(/@\[([^\]]+)\]\(([^)]+)\)/g, (_, label, tabId) => {
+    const safeTabId = tabId.replace(/"/g, '&quot;')
+    const isFile = tabId.startsWith('__editor__:')
+    const iconSvg = isFile
+      ? `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
+      : `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
+    return `<span class="mention-chip" data-tab-id="${safeTabId}" title="${safeTabId.replace('__editor__:', '').replace('__webview__:', '')}">${iconSvg}<span class="mention-chip-label">${label}</span></span>`
+  })
+}
+
+function handleMentionClick(e: MouseEvent) {
+  const target = e.target as HTMLElement
+  const chip = target.closest('.mention-chip') as HTMLElement | null
+  if (chip?.dataset.tabId) {
+    openTabById(chip.dataset.tabId)
+  }
+}
 
 const agentCwd = ref('~')
-
-const activeProviderName = computed(() => {
-  const p = providers.value.find(p => p.id === activeProviderId.value)
-  return p?.name || ''
-})
 
 function buildApiContent(text: string, images?: string[]): string | MultimodalContent {
   if (!images?.length) return text
@@ -231,7 +278,6 @@ async function loadConfig() {
 async function selectProviderModel(providerId: string, model: string) {
   activeProviderId.value = providerId
   currentModel.value = model
-  modelSelectorOpen.value = false
   await window.aiChat.setActive(providerId, model)
 }
 
@@ -540,11 +586,6 @@ async function sendMessage() {
 
   inputText.value = ''
   pendingImages.splice(0)
-  nextTick(() => {
-    if (inputEl.value) {
-      inputEl.value.style.height = 'auto'
-    }
-  })
   scrollToBottom(true)
   scheduleSave()
 
@@ -576,33 +617,10 @@ function killCommand(toolCallId: string) {
   window.agentChat.killCommand(toolCallId)
 }
 
-function handleKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault()
-    sendMessage()
-  }
-}
-
-function autoResize(e: Event) {
-  const el = e.target as HTMLTextAreaElement
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 160) + 'px'
-}
-
 function selectMode(mode: ChatMode) {
   chatMode.value = mode
-  modeDropdownOpen.value = false
   localStorage.setItem('chatMode', mode)
-  inputEl.value?.focus()
-}
-
-function handleClickOutside(e: MouseEvent) {
-  if (modeDropdownRef.value && !modeDropdownRef.value.contains(e.target as Node)) {
-    modeDropdownOpen.value = false
-  }
-  if (modelSelectorRef.value && !modelSelectorRef.value.contains(e.target as Node)) {
-    modelSelectorOpen.value = false
-  }
+  nextTick(() => composerRef.value?.focusInput())
 }
 
 const imagePreviewUrl = ref<string | null>(null)
@@ -622,6 +640,8 @@ const debugMessagesJson = computed(() => {
   }
   return JSON.stringify(messages, null, 2)
 })
+
+const debugTabContext = computed(() => buildTabContext())
 
 function copyDebugJson() {
   navigator.clipboard.writeText(debugMessagesJson.value).then(() => {
@@ -645,12 +665,10 @@ onMounted(() => {
   loadConfig()
   loadCwd()
   loadMessagesPromise = loadMessages()
-  inputEl.value?.focus()
-  document.addEventListener('click', handleClickOutside)
+  nextTick(() => composerRef.value?.focusInput())
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
   if (isStreaming.value && currentRequestId) {
     if (chatMode.value === 'agent') {
       window.agentChat.stop(currentRequestId)
@@ -678,44 +696,6 @@ defineExpose({ loadConfig, sendWithContent })
   <div class="chat-container">
     <!-- 顶栏 -->
     <div class="chat-topbar">
-      <div ref="modelSelectorRef" class="model-selector">
-        <button class="model-selector-btn" @click.stop="modelSelectorOpen = !modelSelectorOpen">
-          <span v-if="activeProviderName" class="model-provider-label">{{ activeProviderName }}</span>
-          <span class="model-name-label">{{ currentModel || '未配置模型' }}</span>
-          <svg
-            class="model-selector-chevron"
-            :class="{ open: modelSelectorOpen }"
-            width="11" height="11" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round" stroke-linejoin="round"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-        <Transition name="dropdown">
-          <div v-if="modelSelectorOpen" class="model-selector-menu">
-            <div v-if="!providers.length" class="model-selector-empty">请先在设置中配置供应商</div>
-            <template v-else>
-              <div v-for="p in providers" :key="p.id" class="model-selector-group">
-                <div class="model-selector-group-title">{{ p.name || '未命名' }}</div>
-                <button
-                  v-for="m in p.models"
-                  :key="`${p.id}-${m}`"
-                  class="model-selector-item"
-                  :class="{ active: activeProviderId === p.id && currentModel === m }"
-                  @click="selectProviderModel(p.id, m)"
-                >
-                  <span>{{ m }}</span>
-                  <svg v-if="activeProviderId === p.id && currentModel === m" class="check-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </button>
-                <div v-if="!p.models.length" class="model-selector-no-models">暂无模型</div>
-              </div>
-            </template>
-          </div>
-        </Transition>
-      </div>
       <button v-if="chatMode === 'agent'" class="cwd-btn" :title="agentCwd" @click="changeCwd">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -795,7 +775,12 @@ defineExpose({ loadConfig, sendWithContent })
           </div>
 
           <!-- Text content -->
-          <div v-if="msg.content && msg.role === 'user'" class="message-content">{{ msg.content }}</div>
+          <div
+            v-if="msg.content && msg.role === 'user'"
+            class="message-content user-message-content"
+            v-html="renderUserContent(msg.content)"
+            @click="handleMentionClick"
+          ></div>
           <div v-if="msg.content && msg.role === 'assistant'" class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
 
           <!-- Tool calls (agent mode) -->
@@ -828,79 +813,27 @@ defineExpose({ loadConfig, sendWithContent })
 
     <!-- 输入区 -->
     <div class="input-area" @drop="handleDrop" @dragover="handleDragOver">
-      <!-- Pending images preview -->
-      <div v-if="pendingImages.length" class="pending-images">
-        <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-image-item">
-          <img :src="img" class="pending-image-thumb" />
-          <button class="pending-image-remove" @click="removePendingImage(idx)" title="移除">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div class="input-row">
-        <div ref="modeDropdownRef" class="mode-dropdown">
-          <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
-            <span class="mode-dot" :class="chatMode"></span>
-            {{ modeLabels[chatMode] }}
-            <svg
-              class="mode-chevron"
-              :class="{ open: modeDropdownOpen }"
-              width="12" height="12" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" stroke-width="2.5"
-              stroke-linecap="round" stroke-linejoin="round"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          <Transition name="dropdown">
-            <div v-if="modeDropdownOpen" class="mode-menu">
-              <button
-                v-for="m in (['chat', 'agent'] as ChatMode[])"
-                :key="m"
-                class="mode-option"
-                :class="{ active: chatMode === m }"
-                @click="selectMode(m)"
-              >
-                <span class="mode-dot" :class="m"></span>
-                <span>{{ modeLabels[m] }}</span>
-                <svg v-if="chatMode === m" class="check-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </button>
-            </div>
-          </Transition>
-        </div>
-        <button class="image-upload-btn" @click="selectImages" title="添加图片">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
-        </button>
-        <textarea
-          ref="inputEl"
-          v-model="inputText"
-          class="chat-input"
-          rows="1"
-          :placeholder="chatMode === 'agent' ? 'Agent 模式：描述任务...' : '输入消息... (Shift+Enter 换行)'"
-          @keydown="handleKeydown"
-          @input="autoResize"
-          @paste="handlePaste"
-        />
-        <button v-if="isStreaming" class="stop-btn" @click="stopGeneration" title="终止对话">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-          </svg>
-        </button>
-        <button v-else class="send-btn" :disabled="!canSend" @click="sendMessage">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13" />
-            <polygon points="22 2 15 22 11 13 2 9 22 2" />
-          </svg>
-        </button>
-      </div>
+      <ChatComposer
+        ref="composerRef"
+        v-model="inputText"
+        variant="chat"
+        view-transition-name="chat-composer"
+        :pending-images="pendingImages"
+        :providers="providers"
+        :active-provider-id="activeProviderId"
+        :current-model="currentModel"
+        :chat-mode="chatMode"
+        :can-send="canSend"
+        :is-streaming="isStreaming"
+        :placeholder="chatMode === 'agent' ? 'Agent 模式：描述任务...' : '输入消息... (Shift+Enter 换行)'"
+        @send="sendMessage"
+        @stop="stopGeneration"
+        @paste="handlePaste"
+        @select-images="selectImages"
+        @remove-image="removePendingImage"
+        @select-provider-model="({ providerId, model }) => selectProviderModel(providerId, model)"
+        @select-mode="selectMode"
+      />
     </div>
 
     <!-- Image Preview Overlay -->
@@ -929,6 +862,10 @@ defineExpose({ loadConfig, sendWithContent })
             <button v-if="debugSelectedMsg !== null" class="debug-action-btn" @click="debugSelectedMsg = null" title="查看全部">全部</button>
             <button class="debug-action-btn" @click="debugPanelOpen = false" title="关闭">✕</button>
           </div>
+        </div>
+        <div v-if="debugTabContext" class="debug-context-section">
+          <div class="debug-context-label">Tab Context (隐藏系统消息)</div>
+          <pre class="debug-context-pre">{{ debugTabContext }}</pre>
         </div>
         <div class="debug-panel-body">
           <pre class="debug-json">{{ debugMessagesJson }}</pre>
@@ -1337,6 +1274,13 @@ defineExpose({ loadConfig, sendWithContent })
 .assistant .message-content {
   margin-bottom: 8px;
 }
+
+.user-message-content {
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.6;
+}
+
 
 .assistant .message-bubble > :last-child {
   margin-bottom: 0;
@@ -1922,6 +1866,31 @@ defineExpose({ loadConfig, sendWithContent })
   tab-size: 2;
 }
 
+.debug-context-section {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--c-surface0);
+  background: color-mix(in srgb, var(--c-yellow) 6%, var(--c-surface0));
+}
+
+.debug-context-label {
+  font-size: 0.66rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--c-yellow);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.debug-context-pre {
+  margin: 0;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.74rem;
+  line-height: 1.6;
+  color: var(--c-subtext0);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .debug-panel-footer {
   display: flex;
   justify-content: space-between;
@@ -1944,3 +1913,4 @@ defineExpose({ loadConfig, sendWithContent })
   opacity: 0;
 }
 </style>
+

@@ -35,8 +35,8 @@
   --c-peach: #fe640b;
   --c-code-inline: #d20f39;
 
-  --c-user-bubble-bg: #1e66f5;
-  --c-user-bubble-text: #ffffff;
+  --c-user-bubble-bg: #dce0e8;
+  --c-user-bubble-text: #4c4f69;
   --c-send-btn-bg: #1e66f5;
   --c-send-btn-text: #ffffff;
   --c-error-bar-bg: #d20f39;
@@ -89,8 +89,8 @@
   --c-peach: #fab387;
   --c-code-inline: #f38ba8;
 
-  --c-user-bubble-bg: #89b4fa;
-  --c-user-bubble-text: #1e1e2e;
+  --c-user-bubble-bg: #313244;
+  --c-user-bubble-text: #cdd6f4;
   --c-send-btn-bg: #89b4fa;
   --c-send-btn-text: #1e1e2e;
   --c-error-bar-bg: #f38ba8;
@@ -146,4 +146,42 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--c-scrollbar-hover);
+}
+
+/* ---- Mention chips (v-html rendered, scoped CSS won't reach these) ---- */
+.mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 5px;
+  background: var(--c-blue);
+  border-radius: 5px;
+  color: #fff !important;
+  font-size: 0.8em;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  vertical-align: middle;
+  line-height: 1.5;
+  max-width: 220px;
+  opacity: 0.9;
+  transition: opacity 0.15s, background 0.15s, transform 0.15s;
+}
+
+.mention-chip:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--c-blue) 82%, #fff);
+  transform: translateY(-1px);
+}
+
+.mention-chip svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.mention-chip .mention-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
