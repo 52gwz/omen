@@ -67,8 +67,11 @@ contextBridge.exposeInMainWorld('aiChat', {
 
 // --------- Agent API ---------
 contextBridge.exposeInMainWorld('agentChat', {
-  start(payload: { requestId: string; model: string; messages: any[]; cwd: string; providerId?: string }) {
+  start(payload: { requestId: string; model: string; messages: any[]; cwd: string; providerId?: string; tabContext?: string }) {
     ipcRenderer.send('agent:start', payload)
+  },
+  getSystemPrompt(payload: { cwd: string; tabContext?: string }): Promise<string> {
+    return ipcRenderer.invoke('agent:get-system-prompt', payload)
   },
   stop(requestId: string) {
     ipcRenderer.send('agent:stop', { requestId })

@@ -2,7 +2,7 @@
 import Tribute from 'tributejs'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import type { MentionTab } from '../types/workspace'
+import type { CodeReference, MentionTab } from '../types/workspace'
 
 type ChatMode = 'chat' | 'agent'
 type ComposerVariant = 'welcome' | 'chat'
@@ -37,6 +37,8 @@ const emit = defineEmits<{
 }>()
 
 const openTabs = inject<Ref<MentionTab[]>>('openTabs', ref([]))
+const pendingCodeReferences = inject<CodeReference[]>('pendingCodeReferences', [])
+const removeCodeReference = inject<(index: number) => void>('removeCodeReference', () => {})
 
 const editorEl = ref<HTMLDivElement>()
 const editorHasContent = ref(false)
@@ -44,6 +46,16 @@ const modeDropdownOpen = ref(false)
 const modelSelectorOpen = ref(false)
 const modeDropdownRef = ref<HTMLElement>()
 const modelSelectorRef = ref<HTMLElement>()
+
+function refDisplayName(filePath: string): string {
+  return filePath.replace(/\\/g, '/').split('/').pop() || filePath
+}
+
+function refPreview(text: string, maxLines = 4): string {
+  const lines = text.split('\n')
+  if (lines.length <= maxLines) return text
+  return lines.slice(0, maxLines).join('\n') + '\n...'
+}
 
 let tribute: Tribute<MentionTab> | null = null
 let suppressWatch = false
@@ -193,7 +205,10 @@ onMounted(() => {
           const iconSvg = item.original.type === 'file'
             ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>`
             : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`
-          return `<span class="tribute-item-icon">${iconSvg}</span><span class="tribute-item-label">${item.string}</span>`
+          const dir = item.original.path ?? ''
+          const dirLabel = dir.length > 22 ? `...${dir.slice(-22)}` : dir
+          const pathHtml = dirLabel ? `<span class="tribute-item-path">${dirLabel}</span>` : ''
+          return `<span class="tribute-item-icon">${iconSvg}</span><span class="tribute-item-label">${item.string}</span>${pathHtml}`
         },
         noMatchTemplate: () => `<li class="tribute-no-match">无匹配标签页</li>`,
         containerClass: 'mention-tribute-container',
@@ -234,6 +249,25 @@ defineExpose({
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
+        </div>
+      </div>
+
+      <div v-if="pendingCodeReferences.length" class="composer-references">
+        <div v-for="(cref, idx) in pendingCodeReferences" :key="idx" class="reference-item">
+          <div class="reference-header">
+            <svg class="reference-file-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span class="reference-filename" :title="cref.filePath">{{ refDisplayName(cref.filePath) }}</span>
+            <span class="reference-lines">L{{ cref.startLine }}<template v-if="cref.startLine !== cref.endLine">-L{{ cref.endLine }}</template></span>
+            <button class="reference-remove" title="移除引用" @click="removeCodeReference(idx)">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <pre class="reference-code">{{ refPreview(cref.text) }}</pre>
         </div>
       </div>
 
@@ -801,6 +835,95 @@ defineExpose({
   color: #fff;
 }
 
+.composer-references {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px 0;
+}
+
+.reference-item {
+  background: var(--c-surface0);
+  border: 1px solid var(--c-surface1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.reference-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--c-surface1) 50%, transparent);
+}
+
+.reference-file-icon {
+  flex-shrink: 0;
+  color: var(--c-green, #40a02b);
+}
+
+.reference-filename {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--c-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.reference-lines {
+  font-size: 0.7rem;
+  color: var(--c-overlay0);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.reference-remove {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.reference-remove:hover {
+  background: var(--c-surface1);
+  color: var(--c-red, #e64553);
+}
+
+.reference-code {
+  margin: 0;
+  padding: 6px 10px;
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--c-subtext0);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 80px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-surface1) transparent;
+}
+
+.reference-code::-webkit-scrollbar {
+  height: 4px;
+}
+
+.reference-code::-webkit-scrollbar-thumb {
+  background: var(--c-surface1);
+  border-radius: 2px;
+}
+
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: opacity 0.15s ease, transform 0.15s ease;
@@ -870,10 +993,25 @@ defineExpose({
 
 .tribute-item-label {
   flex: 1;
+  min-width: 0;
 }
 
 .tribute-item-label span {
   font-weight: 500;
+}
+
+.tribute-item-path {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  color: var(--c-overlay0, #6c7086);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  margin-left: 8px;
+  white-space: nowrap;
+}
+
+.mention-tribute-item-active .tribute-item-path {
+  color: var(--c-blue, #89b4fa);
+  opacity: 0.7;
 }
 
 .tribute-no-match {

@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, inject } from 'vue'
 import * as monaco from 'monaco-editor'
+import { marked } from 'marked'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
 import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import { useTheme } from '../composables/useTheme'
+import type { CodeReference } from '../types/workspace'
 
 self.MonacoEnvironment = {
   getWorker(_: string, label: string) {
@@ -26,6 +28,8 @@ const emit = defineEmits<{
   close: []
 }>()
 
+const addCodeReference = inject<(ref: CodeReference) => void>('addCodeReference')
+
 const { theme } = useTheme()
 const editorContainer = ref<HTMLDivElement>()
 const editor = shallowRef<monaco.editor.IStandaloneCodeEditor>()
@@ -33,6 +37,28 @@ const loading = ref(true)
 const error = ref('')
 const modified = ref(false)
 const saving = ref(false)
+const previewMode = ref(false)
+const rawContent = ref('')
+
+const isMarkdown = computed(() => {
+  const ext = props.filePath.split('.').pop()?.toLowerCase()
+  return ext === 'md' || ext === 'markdown'
+})
+
+const renderedHtml = computed(() => {
+  if (!isMarkdown.value || !previewMode.value) return ''
+  return marked.parse(rawContent.value, { async: false }) as string
+})
+
+function togglePreview() {
+  if (previewMode.value) {
+    previewMode.value = false
+    requestAnimationFrame(() => editor.value?.layout())
+  } else {
+    if (editor.value) rawContent.value = editor.value.getValue()
+    previewMode.value = true
+  }
+}
 
 const EXT_LANG_MAP: Record<string, string> = {
   ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
@@ -71,6 +97,7 @@ async function loadFile() {
     return
   }
 
+  rawContent.value = result.content
   if (editor.value) {
     const model = editor.value.getModel()
     if (model) {
@@ -95,6 +122,7 @@ async function saveFile() {
 }
 
 watch(() => props.filePath, () => {
+  previewMode.value = false
   loadFile()
 })
 
@@ -127,10 +155,34 @@ onMounted(() => {
 
   editor.value.onDidChangeModelContent(() => {
     modified.value = true
+    if (isMarkdown.value) rawContent.value = editor.value!.getValue()
   })
 
   editor.value.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
     saveFile()
+  })
+
+  editor.value.addAction({
+    id: 'add-to-chat-reference',
+    label: '引用到对话',
+    contextMenuGroupId: '9_cutcopypaste',
+    contextMenuOrder: 99,
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyL],
+    precondition: 'editorHasSelection',
+    run: (ed) => {
+      const selection = ed.getSelection()
+      if (!selection) return
+      const model = ed.getModel()
+      const selectedText = model?.getValueInRange(selection)
+      if (!selectedText || !addCodeReference) return
+      addCodeReference({
+        filePath: props.filePath,
+        text: selectedText,
+        startLine: selection.startLineNumber,
+        endLine: selection.endLineNumber,
+        language: getLang(props.filePath),
+      })
+    },
   })
 
   loadFile()
@@ -153,6 +205,30 @@ onBeforeUnmount(() => {
         <span v-if="modified" class="editor-modified-dot" title="未保存"></span>
       </div>
       <div class="editor-actions">
+        <div v-if="isMarkdown" class="md-mode-toggle">
+          <button
+            class="mode-toggle-btn"
+            :class="{ active: !previewMode }"
+            title="编辑"
+            @click="previewMode && togglePreview()"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+          <button
+            class="mode-toggle-btn"
+            :class="{ active: previewMode }"
+            title="预览"
+            @click="!previewMode && togglePreview()"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+        </div>
         <button
           v-if="modified"
           class="editor-action-btn save-btn"
@@ -180,7 +256,8 @@ onBeforeUnmount(() => {
     <div v-else-if="error" class="editor-error">
       <span>{{ error }}</span>
     </div>
-    <div ref="editorContainer" class="editor-container"></div>
+    <div v-if="isMarkdown && previewMode" class="md-preview" v-html="renderedHtml"></div>
+    <div v-show="!previewMode" ref="editorContainer" class="editor-container"></div>
   </div>
 </template>
 
@@ -287,5 +364,205 @@ onBeforeUnmount(() => {
 
 .editor-error {
   color: var(--c-red);
+}
+
+.md-mode-toggle {
+  display: flex;
+  align-items: center;
+  background: var(--c-surface0);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 1px;
+  margin-right: 4px;
+}
+
+.mode-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.mode-toggle-btn:hover {
+  color: var(--c-text);
+}
+
+.mode-toggle-btn.active {
+  background: var(--c-mantle);
+  color: var(--c-blue);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.md-preview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 24px 32px;
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--c-text);
+  scrollbar-width: thin;
+  scrollbar-color: var(--c-surface1) transparent;
+}
+
+.md-preview::-webkit-scrollbar {
+  width: 6px;
+}
+
+.md-preview::-webkit-scrollbar-thumb {
+  background: var(--c-surface1);
+  border-radius: 3px;
+}
+
+.md-preview :deep(h1) {
+  font-size: 1.8em;
+  font-weight: 700;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--c-surface0);
+  color: var(--c-text);
+}
+
+.md-preview :deep(h2) {
+  font-size: 1.4em;
+  font-weight: 600;
+  margin: 24px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--c-surface0);
+  color: var(--c-text);
+}
+
+.md-preview :deep(h3) {
+  font-size: 1.15em;
+  font-weight: 600;
+  margin: 20px 0 8px;
+  color: var(--c-text);
+}
+
+.md-preview :deep(h4),
+.md-preview :deep(h5),
+.md-preview :deep(h6) {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 16px 0 6px;
+  color: var(--c-subtext0);
+}
+
+.md-preview :deep(p) {
+  margin: 0 0 12px;
+}
+
+.md-preview :deep(a) {
+  color: var(--c-blue);
+  text-decoration: none;
+}
+
+.md-preview :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.md-preview :deep(strong) {
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.md-preview :deep(code) {
+  font-family: 'SF Mono', 'Fira Code', Menlo, Monaco, monospace;
+  font-size: 0.88em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--c-surface0);
+  color: var(--c-peach, #fe640b);
+}
+
+.md-preview :deep(pre) {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--c-mantle);
+  overflow-x: auto;
+  border: 1px solid var(--c-surface0);
+}
+
+.md-preview :deep(pre code) {
+  padding: 0;
+  background: none;
+  color: var(--c-text);
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.md-preview :deep(blockquote) {
+  margin: 0 0 16px;
+  padding: 8px 16px;
+  border-left: 3px solid var(--c-blue);
+  background: color-mix(in srgb, var(--c-surface0) 50%, transparent);
+  border-radius: 0 6px 6px 0;
+  color: var(--c-subtext0);
+}
+
+.md-preview :deep(blockquote p:last-child) {
+  margin-bottom: 0;
+}
+
+.md-preview :deep(ul),
+.md-preview :deep(ol) {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+
+.md-preview :deep(li) {
+  margin: 4px 0;
+}
+
+.md-preview :deep(li > ul),
+.md-preview :deep(li > ol) {
+  margin-bottom: 0;
+}
+
+.md-preview :deep(hr) {
+  margin: 24px 0;
+  border: none;
+  border-top: 1px solid var(--c-surface0);
+}
+
+.md-preview :deep(table) {
+  width: 100%;
+  margin: 0 0 16px;
+  border-collapse: collapse;
+  font-size: 0.88em;
+}
+
+.md-preview :deep(th),
+.md-preview :deep(td) {
+  padding: 8px 12px;
+  border: 1px solid var(--c-surface0);
+  text-align: left;
+}
+
+.md-preview :deep(th) {
+  background: var(--c-mantle);
+  font-weight: 600;
+}
+
+.md-preview :deep(tr:nth-child(even)) {
+  background: color-mix(in srgb, var(--c-surface0) 30%, transparent);
+}
+
+.md-preview :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.md-preview :deep(input[type="checkbox"]) {
+  margin-right: 6px;
 }
 </style>

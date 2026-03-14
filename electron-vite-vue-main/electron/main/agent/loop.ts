@@ -1,5 +1,7 @@
 import type { WebContents } from 'electron'
 import { ipcMain } from 'electron'
+import path from 'node:path'
+import fs from 'node:fs'
 import { toolDefinitions, executeTool, type ToolExecOptions } from './tools'
 import { buildSystemPrompt } from './system-prompt'
 import { loadSkills } from './skills'
@@ -41,6 +43,7 @@ interface AgentRunParams {
   autoApproveAll?: boolean
   signal?: AbortSignal
   disabledSkills?: string[]
+  tabContext?: string
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -83,6 +86,7 @@ async function streamOnce(params: {
     body: JSON.stringify({
       model,
       stream: true,
+      max_tokens: 16384,
       messages: allMessages,
       tools: toolDefinitions,
       tool_choice: 'auto',
@@ -227,13 +231,13 @@ function waitForConfirmation(requestId: string, toolCallId: string, signal?: Abo
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [] } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext } = params
 
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter(s => s.enabled)
 
   const allMessages: Message[] = [
-    { role: 'system', content: buildSystemPrompt(cwd, enabledSkills) },
+    { role: 'system', content: buildSystemPrompt(cwd, enabledSkills, tabContext) },
     ...params.messages.map((m): Message => ({ role: m.role, content: m.content })),
   ]
 
@@ -271,7 +275,23 @@ export async function runAgentLoop(params: AgentRunParams) {
       try {
         args = JSON.parse(tc.function.arguments)
       } catch {
-        args = {}
+        const errorContent = result.finishReason === 'length'
+          ? `[error] 你的输出超出了 token 上限，工具参数被截断导致 JSON 不完整，${tc.function.name} 未执行。请将内容拆分为多次调用：先用 write_file 写入文件的前半部分，再用 append_file 逐段追加剩余内容，确保每次调用的 content 足够短。`
+          : `[error] 工具参数 JSON 格式错误，${tc.function.name} 未执行。请检查参数格式后重试。`
+
+        const toolMsg: Message = {
+          role: 'tool',
+          content: errorContent,
+          tool_call_id: tc.id,
+        }
+        allMessages.push(toolMsg)
+        sender.send('agent:tool-result', {
+          requestId,
+          toolCallId: tc.id,
+          result: errorContent,
+          rejected: false,
+        })
+        continue
       }
 
       const isSafe = autoApproveAll

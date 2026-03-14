@@ -68,6 +68,21 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
+      name: 'append_file',
+      description: '向已有文件末尾追加内容。文件不存在时自动创建。适合分段写入大文件：先用 write_file 写入开头部分，再用 append_file 逐步追加后续内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '文件路径' },
+          content: { type: 'string', description: '要追加的内容' },
+        },
+        required: ['path', 'content'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'list_directory',
       description: '列出指定目录的内容，返回文件和子目录列表。',
       parameters: {
@@ -285,6 +300,13 @@ async function writeFile(filePath: string, content: string, cwd: string): Promis
   return `已写入 ${resolved}`
 }
 
+async function appendFile(filePath: string, content: string, cwd: string): Promise<string> {
+  const resolved = resolvePath(filePath, cwd)
+  await fs.mkdir(path.dirname(resolved), { recursive: true })
+  await fs.appendFile(resolved, content, 'utf-8')
+  return `已追加到 ${resolved}`
+}
+
 async function listDirectory(dirPath: string | undefined, cwd: string): Promise<string> {
   const resolved = dirPath ? resolvePath(dirPath, cwd) : cwd
   const entries = await fs.readdir(resolved, { withFileTypes: true })
@@ -432,6 +454,8 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
         return text(await readFile(args.path as string, cwd))
       case 'write_file':
         return text(await writeFile(args.path as string, args.content as string, cwd))
+      case 'append_file':
+        return text(await appendFile(args.path as string, args.content as string, cwd))
       case 'list_directory':
         return text(await listDirectory(args.path as string | undefined, cwd))
       case 'grep_search':

@@ -37,7 +37,8 @@ interface AiChatApi {
 }
 
 interface AgentChatApi {
-  start(payload: { requestId: string; model: string; messages: ApiMessage[]; cwd: string; providerId?: string }): void
+  start(payload: { requestId: string; model: string; messages: ApiMessage[]; cwd: string; providerId?: string; tabContext?: string }): void
+  getSystemPrompt(payload: { cwd: string; tabContext?: string }): Promise<string>
   stop(requestId: string): void
   confirmTool(requestId: string, toolCallId: string): void
   rejectTool(requestId: string, toolCallId: string): void

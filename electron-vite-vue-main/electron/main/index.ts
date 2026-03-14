@@ -408,6 +408,7 @@ ipcMain.on('agent:kill-command', (_, data: { toolCallId: string }) => {
 import { runAgentLoop } from './agent/loop'
 import { killRunningCommand } from './agent/tools'
 import { loadSkills } from './agent/skills'
+import { buildSystemPrompt } from './agent/system-prompt'
 
 ipcMain.on('agent:start', async (event, payload: {
   requestId: string
@@ -415,6 +416,7 @@ ipcMain.on('agent:start', async (event, payload: {
   messages: any[]
   cwd: string
   providerId?: string
+  tabContext?: string
 }) => {
   const { requestId, model, messages } = payload
   const sender = event.sender
@@ -434,7 +436,7 @@ ipcMain.on('agent:start', async (event, payload: {
     const maxIterations = store.get('maxIterations') ?? 0
     const autoApproveAll = store.get('autoApproveAll') ?? false
     const disabledSkills = store.get('disabledSkills') || []
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills })
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills, tabContext: payload.tabContext })
   } catch (err: any) {
     if (err.name === 'AbortError') {
       sender.send('agent:done', { requestId, stopped: true })
@@ -606,6 +608,18 @@ ipcMain.handle('conversation:save-messages', (_, convId: string, messages: Store
     conversations[convId].messages = messages
     store.set('conversations', conversations)
   }
+})
+
+ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabContext?: string }) => {
+  const disabledSkills: string[] = store.get('disabledSkills') || []
+  const skills = await loadSkills(disabledSkills)
+  const enabledSkills = skills.filter((s: any) => s.enabled)
+  const cwd = (!payload.cwd || payload.cwd === '~')
+    ? os.homedir()
+    : payload.cwd.startsWith('~/')
+      ? path.join(os.homedir(), payload.cwd.slice(2))
+      : payload.cwd
+  return buildSystemPrompt(cwd, enabledSkills, payload.tabContext)
 })
 
 // ---- Skills IPC Handlers ----

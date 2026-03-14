@@ -47,4 +47,14 @@ export interface MentionTab {
   key: string
   value: string
   type: 'file' | 'webview'
+  currentUrl?: string
+  path?: string
+}
+
+export interface CodeReference {
+  filePath: string
+  text: string
+  startLine: number
+  endLine: number
+  language: string
 }

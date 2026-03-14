@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, injec
 import { marked } from 'marked'
 import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
+import type { CodeReference } from '../types/workspace'
 
 marked.setOptions({
   breaks: true,
@@ -92,7 +93,7 @@ let currentRequestId = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadMessagesPromise: Promise<void> | null = null
 
-const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0) && !isStreaming.value && !!currentModel.value)
+const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0 || pendingCodeReferences.length > 0) && !isStreaming.value && !!currentModel.value)
 
 const openTabById = inject<(tabId: string) => void>('openTabById', () => {})
 
@@ -100,30 +101,58 @@ interface MentionTab {
   key: string
   value: string
   type: 'file' | 'webview'
+  currentUrl?: string
 }
 
 const openTabs = inject<Ref<MentionTab[]>>('openTabs', ref([]))
 const appActiveConvId = inject<Ref<string>>('appActiveConvId', ref(''))
+const activeTabConvIds = inject<Ref<Set<string>>>('activeTabConvIds', ref(new Set()))
+const webviewCurrentUrls = inject<Record<string, string>>('webviewCurrentUrls', {})
+const pendingCodeReferences = inject<CodeReference[]>('pendingCodeReferences', [])
+const clearCodeReferences = inject<() => void>('clearCodeReferences', () => {})
 
-function buildTabContext(): string | null {
+function toRelativePath(cwd: string, filePath: string): string {
+  const base = cwd.endsWith('/') ? cwd : cwd + '/'
+  return filePath.startsWith(base) ? filePath.slice(base.length) : filePath
+}
+
+function tabLabel(t: MentionTab, cwd?: string): string {
+  if (t.type === 'file') {
+    const abs = t.value.slice('__editor__:'.length)
+    return cwd ? toRelativePath(cwd, abs) : abs
+  }
+  const fp = t.value.slice('__webview__:'.length)
+  const url = t.currentUrl ?? fp
+  if (url.startsWith('file://')) {
+    const decoded = decodeURIComponent(url.replace(/^file:\/\//, ''))
+    const rel = cwd ? toRelativePath(cwd, decoded) : decoded
+    return `${rel}（浏览器）`
+  }
+  return url
+}
+
+function buildTabContext(cwd?: string): string | null {
   const tabs = openTabs.value
   if (!tabs.length) return null
 
-  const parts: string[] = []
+  const visibleIds = activeTabConvIds.value
+  const viewing: string[] = []
+  const background: string[] = []
 
-  const activeId = appActiveConvId.value
-  if (activeId.startsWith('__editor__:')) {
-    parts.push(`当前用户正在编辑：${activeId.slice('__editor__:'.length)}`)
-  } else if (activeId.startsWith('__webview__:')) {
-    parts.push(`当前用户正在浏览：${activeId.slice('__webview__:'.length)}`)
+  for (const t of tabs) {
+    const label = tabLabel(t, cwd)
+    if (visibleIds.has(t.value)) {
+      viewing.push(label)
+    } else {
+      background.push(label)
+    }
   }
 
-  const allLabels = tabs.map((t) =>
-    t.type === 'file' ? t.value.slice('__editor__:'.length) : t.value.slice('__webview__:'.length),
-  )
-  parts.push(`用户已打开的文件/网站：${allLabels.join('、')}`)
+  const lines: string[] = []
+  if (viewing.length) lines.push(`正在查看：${viewing.join('、')}`)
+  if (background.length) lines.push(`后台标签：${background.join('、')}`)
 
-  return parts.join('\n')
+  return lines.length ? lines.join('\n') : null
 }
 
 function renderUserContent(content: string): string {
@@ -148,6 +177,14 @@ function handleMentionClick(e: MouseEvent) {
   if (chip?.dataset.tabId) {
     openTabById(chip.dataset.tabId)
   }
+}
+
+function formatCodeReferences(refs: CodeReference[]): string {
+  return refs.map((r) => {
+    const name = r.filePath.replace(/\\/g, '/').split('/').pop() || r.filePath
+    const lineRange = r.startLine === r.endLine ? `L${r.startLine}` : `L${r.startLine}-L${r.endLine}`
+    return `[引用: ${name} (${lineRange})]\n\`\`\`${r.language}\n${r.text}\n\`\`\``
+  }).join('\n\n')
 }
 
 const agentCwd = ref('~')
@@ -430,7 +467,7 @@ function sendAgentMessage(text: string) {
     content: buildApiContent(m.content, m.images),
   }))
 
-  window.agentChat.start({ requestId, model: currentModel.value, messages: historyMessages, cwd: agentCwd.value, providerId: activeProviderId.value })
+  window.agentChat.start({ requestId, model: currentModel.value, messages: historyMessages, cwd: agentCwd.value, providerId: activeProviderId.value, tabContext: buildTabContext(agentCwd.value) ?? undefined })
 
   const offReasoning = window.agentChat.onStreamReasoning(({ requestId: rid, delta }) => {
     if (rid !== requestId) return
@@ -565,34 +602,40 @@ function sendAgentMessage(text: string) {
 
 async function sendMessage() {
   const text = inputText.value.trim()
-  if ((!text && pendingImages.length === 0) || isStreaming.value) return
+  const refs = [...pendingCodeReferences]
+  if ((!text && pendingImages.length === 0 && !refs.length) || isStreaming.value) return
 
   errorMsg.value = ''
 
   const images = pendingImages.length > 0 ? [...pendingImages] : undefined
+  const refsText = refs.length ? formatCodeReferences(refs) : ''
+  const fullText = refsText ? (text ? `${refsText}\n\n${text}` : refsText) : text
 
   const isFirstMessage = messages.length === 0
-  const msg: ChatMessage = { role: 'user', content: text }
+  const msg: ChatMessage = { role: 'user', content: fullText }
   if (images) msg.images = images
   messages.push(msg)
 
   if (isFirstMessage && props.conversationId) {
     const title = text
       ? (text.length > 30 ? text.slice(0, 30) + '...' : text)
-      : `图片消息 (${images?.length || 0}张)`
+      : refs.length
+        ? `引用: ${refs[0].filePath.split('/').pop()}`
+        : `图片消息 (${images?.length || 0}张)`
     window.conversationApi.rename(props.conversationId, title)
     emit('titleChange', title)
   }
 
   inputText.value = ''
   pendingImages.splice(0)
+  clearCodeReferences()
   scrollToBottom(true)
   scheduleSave()
 
   if (chatMode.value === 'agent') {
-    sendAgentMessage(text)
+    sendAgentMessage(fullText)
   } else {
-    sendChatMessage(text)
+    sendChatMessage(fullText)
   }
 }
 
@@ -633,18 +676,33 @@ function closeImagePreview() {
   imagePreviewUrl.value = null
 }
 
-const debugMessagesJson = computed(() => {
+const debugSystemPrompt = ref<string | null>(null)
+
+const debugFullMessages = computed(() => {
+  const sys = debugSystemPrompt.value
+  const sysMsg = sys ? [{ role: 'system', content: sys }] : []
   if (debugSelectedMsg.value !== null) {
     const msg = messages[debugSelectedMsg.value]
     return msg ? JSON.stringify(msg, null, 2) : 'null'
   }
-  return JSON.stringify(messages, null, 2)
+  return JSON.stringify([...sysMsg, ...messages], null, 2)
 })
 
-const debugTabContext = computed(() => buildTabContext())
+const debugTabContext = computed(() => buildTabContext(agentCwd.value))
+
+async function refreshDebugSystemPrompt() {
+  debugSystemPrompt.value = await window.agentChat.getSystemPrompt({
+    cwd: agentCwd.value,
+    tabContext: buildTabContext(agentCwd.value) ?? undefined,
+  })
+}
+
+watch(debugPanelOpen, (open) => {
+  if (open) refreshDebugSystemPrompt()
+})
 
 function copyDebugJson() {
-  navigator.clipboard.writeText(debugMessagesJson.value).then(() => {
+  navigator.clipboard.writeText(debugFullMessages.value).then(() => {
     debugCopied.value = true
     setTimeout(() => { debugCopied.value = false }, 1500)
   })
@@ -852,7 +910,7 @@ defineExpose({ loadConfig, sendWithContent })
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v1h4" /><path d="M18 8h-2V6a4 4 0 0 0-4-4" /><path d="M20 10a2 2 0 0 0-2-2h-2" /><rect x="6" y="10" width="12" height="10" rx="3" /><line x1="12" y1="10" x2="12" y2="20" />
             </svg>
-            {{ debugSelectedMsg !== null ? `消息 #${debugSelectedMsg}` : `全部消息 (${messages.length})` }}
+            {{ debugSelectedMsg !== null ? `消息 #${debugSelectedMsg}` : `全部消息 (${messages.length + (debugSystemPrompt ? 1 : 0)})${debugSystemPrompt ? '，含系统提示' : ''}` }}
           </span>
           <div class="debug-panel-actions">
             <button class="debug-action-btn" @click="copyDebugJson" :title="debugCopied ? '已复制' : '复制 JSON'">
@@ -868,11 +926,11 @@ defineExpose({ loadConfig, sendWithContent })
           <pre class="debug-context-pre">{{ debugTabContext }}</pre>
         </div>
         <div class="debug-panel-body">
-          <pre class="debug-json">{{ debugMessagesJson }}</pre>
+          <pre class="debug-json">{{ debugFullMessages }}</pre>
         </div>
         <div class="debug-panel-footer">
           <span>Raw Messages</span>
-          <span>{{ messages.length }} 条消息</span>
+          <span>{{ messages.length + (debugSystemPrompt ? 1 : 0) }} 条消息</span>
         </div>
       </div>
     </Transition>

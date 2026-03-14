@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ChatView from './ChatView.vue'
 import MonacoEditor from './MonacoEditor.vue'
 import SkillsTab from './SkillsTab.vue'
@@ -37,6 +37,7 @@ const emit = defineEmits<{
   focusPane: [paneId: string]
   switchTab: [paneId: string, idx: number]
   addTab: [paneId: string]
+  addWebviewTab: [paneId: string]
   closeTab: [paneId: string, idx: number]
   tabDragStart: [paneId: string, tabId: string]
   tabDragEnd: []
@@ -70,6 +71,7 @@ function getTabLabel(tab: TabInfo): string {
   if (tab.convId === props.skillsTabId) return '技能'
   if (tab.convId.startsWith(props.webviewPrefix)) {
     const fp = tab.convId.slice(props.webviewPrefix.length)
+    if (fp.startsWith('__blank_')) return '浏览器'
     return fp.replace(/\\/g, '/').split('/').pop() || '预览'
   }
   if (tab.convId.startsWith(props.editorPrefix)) {
@@ -90,6 +92,13 @@ const conversationTabIds = computed(() => {
   return pane.value.tabs
     .map(tab => tab.convId)
     .filter((convId, idx, arr) => isConversationTab(convId) && arr.indexOf(convId) === idx)
+})
+
+const webviewTabIds = computed(() => {
+  if (!pane.value) return []
+  return pane.value.tabs
+    .map(tab => tab.convId)
+    .filter((convId, idx, arr) => convId.startsWith(props.webviewPrefix) && arr.indexOf(convId) === idx)
 })
 
 const disableSelfDropPreview = computed(() => {
@@ -267,8 +276,115 @@ function onSplitResizeStart(event: PointerEvent) {
   }
 }
 
+const tabsScrollEl = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+const showTabList = ref(false)
+function addChatTab() {
+  if (!pane.value) return
+  emit('addTab', pane.value.id)
+}
+
+function addBrowserTab() {
+  if (!pane.value) return
+  emit('addWebviewTab', pane.value.id)
+}
+
+function updateScrollState() {
+  const el = tabsScrollEl.value
+  if (!el) {
+    canScrollLeft.value = false
+    canScrollRight.value = false
+    return
+  }
+  canScrollLeft.value = el.scrollLeft > 1
+  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+}
+
+let scrollObserver: ResizeObserver | null = null
+
+function onTabsWheel(event: WheelEvent) {
+  const el = tabsScrollEl.value
+  if (!el) return
+  if (el.scrollWidth <= el.clientWidth) return
+  event.preventDefault()
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
+  el.scrollLeft += delta
+}
+
+function setupScrollObserver() {
+  cleanupScrollObserver()
+  const el = tabsScrollEl.value
+  if (!el) return
+  scrollObserver = new ResizeObserver(() => updateScrollState())
+  scrollObserver.observe(el)
+  el.addEventListener('scroll', updateScrollState, { passive: true })
+  el.addEventListener('wheel', onTabsWheel, { passive: false })
+  updateScrollState()
+}
+
+function cleanupScrollObserver() {
+  const el = tabsScrollEl.value
+  if (el) {
+    el.removeEventListener('scroll', updateScrollState)
+    el.removeEventListener('wheel', onTabsWheel)
+  }
+  scrollObserver?.disconnect()
+  scrollObserver = null
+}
+
+function scrollTabs(direction: 'left' | 'right') {
+  const el = tabsScrollEl.value
+  if (!el) return
+  const amount = el.clientWidth * 0.6
+  el.scrollBy({ left: direction === 'left' ? -amount : amount, behavior: 'smooth' })
+}
+
+function scrollActiveTabIntoView() {
+  if (!pane.value) return
+  const el = tabsScrollEl.value
+  if (!el) return
+  const activeIdx = pane.value.activeTabIdx
+  const tabEl = el.querySelectorAll('.tab-item')[activeIdx] as HTMLElement | undefined
+  if (!tabEl) return
+  tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+}
+
+function selectFromList(idx: number) {
+  if (!pane.value) return
+  emit('switchTab', pane.value.id, idx)
+  showTabList.value = false
+}
+
+function onClickOutsideTabList(event: MouseEvent) {
+  const target = event.target as HTMLElement
+  if (!target.closest('.tab-list-dropdown') && !target.closest('.tab-list-btn')) {
+    showTabList.value = false
+  }
+}
+
+watch(() => pane.value?.activeTabIdx, () => {
+  nextTick(scrollActiveTabIntoView)
+})
+
+watch(() => pane.value?.tabs.length, () => {
+  nextTick(() => {
+    updateScrollState()
+    scrollActiveTabIntoView()
+  })
+})
+
+onMounted(() => {
+  nextTick(setupScrollObserver)
+  document.addEventListener('click', onClickOutsideTabList, true)
+  
+})
+
 onBeforeUnmount(() => {
   cleanupSplitResize()
+  cleanupScrollObserver()
+  document.removeEventListener('click', onClickOutsideTabList, true)
+  
 })
 </script>
 
@@ -291,6 +407,7 @@ onBeforeUnmount(() => {
         @focus-pane="emit('focusPane', $event)"
         @switch-tab="(paneId, idx) => emit('switchTab', paneId, idx)"
         @add-tab="emit('addTab', $event)"
+        @add-webview-tab="emit('addWebviewTab', $event)"
         @close-tab="(paneId, idx) => emit('closeTab', paneId, idx)"
         @tab-drag-start="(paneId, tabId) => emit('tabDragStart', paneId, tabId)"
         @tab-drag-end="emit('tabDragEnd')"
@@ -329,6 +446,7 @@ onBeforeUnmount(() => {
         @focus-pane="emit('focusPane', $event)"
         @switch-tab="(paneId, idx) => emit('switchTab', paneId, idx)"
         @add-tab="emit('addTab', $event)"
+        @add-webview-tab="emit('addWebviewTab', $event)"
         @close-tab="(paneId, idx) => emit('closeTab', paneId, idx)"
         @tab-drag-start="(paneId, tabId) => emit('tabDragStart', paneId, tabId)"
         @tab-drag-end="emit('tabDragEnd')"
@@ -356,8 +474,19 @@ onBeforeUnmount(() => {
     <div class="tab-bar">
       <div class="tab-bar-drag"></div>
       <div class="tab-bar-content">
+        <button
+          v-if="canScrollLeft"
+          class="tab-scroll-btn left"
+          @click.stop="scrollTabs('left')"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
         <div
+          ref="tabsScrollEl"
           class="tabs-scroll"
+          :class="{ 'has-scroll-left': canScrollLeft, 'has-scroll-right': canScrollRight }"
           @dragover="draggingTab ? onTabInsertDragOver(node.pane.tabs.length, $event) : undefined"
           @drop="draggingTab ? onTabInsertDrop(node.pane.tabs.length, $event) : undefined"
         >
@@ -409,13 +538,53 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
-          <button class="tab-add-btn" title="新建标签页" @click.stop="emit('addTab', node.pane.id)">
+          <button class="tab-add-btn" title="新建对话" @click.stop="addChatTab">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
         </div>
+        <button
+          v-if="canScrollRight"
+          class="tab-scroll-btn right"
+          @click.stop="scrollTabs('right')"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+        <div v-if="(canScrollLeft || canScrollRight) && node.pane.tabs.length > 1" class="tab-list-wrapper">
+          <button class="tab-list-btn" title="所有标签页" @click.stop="showTabList = !showTabList">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <div v-if="showTabList" class="tab-list-dropdown">
+            <div
+              v-for="(tab, idx) in node.pane.tabs"
+              :key="tab.id"
+              class="tab-list-item"
+              :class="{ active: node.pane.activeTabIdx === idx }"
+              @click="selectFromList(idx)"
+            >
+              <span class="tab-list-label">{{ getTabLabel(tab) }}</span>
+              <button class="tab-list-close" @click.stop="emit('closeTab', node.pane.id, idx)">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <button class="tab-browser-btn" title="新建浏览器" @click.stop="addBrowserTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -437,8 +606,10 @@ onBeforeUnmount(() => {
       <SkillsTab v-if="activeConvId === skillsTabId" />
 
       <WebViewTab
-        v-if="activeConvId.startsWith(webviewPrefix)"
-        :file-path="activeConvId.slice(webviewPrefix.length)"
+        v-for="convId in webviewTabIds"
+        v-show="convId === activeConvId"
+        :key="convId"
+        :file-path="convId.slice(webviewPrefix.length)"
         :drag-active="interactionActive"
       />
 
@@ -457,8 +628,8 @@ onBeforeUnmount(() => {
       <div
         v-if="draggingTab && !disableSelfDropPreview"
         class="pane-drop-capture"
-        @dragover="onPaneDragOver"
-        @drop="onPaneDrop"
+        @dragover.stop="onPaneDragOver"
+        @drop.stop="onPaneDrop"
       ></div>
 
       <div
@@ -573,7 +744,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 0 8px 6px;
-  gap: 6px;
+  gap: 2px;
 }
 
 .tabs-scroll {
@@ -585,10 +756,48 @@ onBeforeUnmount(() => {
   min-width: 0;
   scrollbar-width: none;
   -ms-overflow-style: none;
+  mask-image: linear-gradient(to right, transparent 0px, black 0px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0px, black 0px);
+}
+
+.tabs-scroll.has-scroll-left {
+  mask-image: linear-gradient(to right, transparent 0px, black 12px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0px, black 12px);
+}
+
+.tabs-scroll.has-scroll-right {
+  mask-image: linear-gradient(to left, transparent 0px, black 12px);
+  -webkit-mask-image: linear-gradient(to left, transparent 0px, black 12px);
+}
+
+.tabs-scroll.has-scroll-left.has-scroll-right {
+  mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0px, black 12px, black calc(100% - 12px), transparent 100%);
 }
 
 .tabs-scroll::-webkit-scrollbar {
   display: none;
+}
+
+.tab-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-scroll-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
 }
 
 .tab-item {
@@ -724,6 +933,125 @@ onBeforeUnmount(() => {
 .tab-add-btn:hover {
   color: var(--c-blue);
   background: var(--c-surface0);
+}
+
+.tab-browser-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-browser-btn:hover {
+  color: var(--c-teal, #179299);
+  background: var(--c-surface0);
+}
+
+.tab-list-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.tab-list-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.tab-list-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.tab-list-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 180px;
+  max-width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--c-mantle);
+  border: 1px solid var(--c-surface1);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+}
+
+.tab-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  color: var(--c-subtext0);
+  transition: background 0.12s, color 0.12s;
+}
+
+.tab-list-item:hover {
+  background: var(--c-surface0);
+  color: var(--c-text);
+}
+
+.tab-list-item.active {
+  color: var(--c-text);
+  font-weight: 500;
+  background: var(--c-surface0);
+}
+
+.tab-list-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.tab-list-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.tab-list-item:hover .tab-list-close {
+  opacity: 1;
+}
+
+.tab-list-close:hover {
+  background: var(--c-surface1);
+  color: var(--c-text);
 }
 
 .tab-item.insert-before::before,

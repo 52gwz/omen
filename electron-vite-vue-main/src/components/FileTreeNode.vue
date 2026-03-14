@@ -61,8 +61,8 @@ async function deletePath() {
   }
 }
 
-onMounted(() => document.addEventListener('click', closeCtxMenu))
-onUnmounted(() => document.removeEventListener('click', closeCtxMenu))
+onMounted(() => document.addEventListener('mousedown', closeCtxMenu))
+onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 </script>
 
 <template>
@@ -108,10 +108,11 @@ onUnmounted(() => document.removeEventListener('click', closeCtxMenu))
       v-if="ctxMenu.visible"
       class="file-ctx-menu"
       :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
+      @mousedown.stop
     >
-      <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">预览</button>
-      <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
       <button @click="showInFolder">在文件管理器中显示</button>
+      <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">在浏览器中打开</button>
+      <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
     </div>
   </Teleport>
 </template>

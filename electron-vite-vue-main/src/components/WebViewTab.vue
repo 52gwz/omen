@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, inject } from 'vue'
 
 const props = defineProps<{
   filePath: string
@@ -7,19 +7,49 @@ const props = defineProps<{
 }>()
 
 const webviewRef = ref<any>()
-const addressInput = ref('')
-const currentUrl = ref('')
 
-const initialUrl = computed(() => `file://${props.filePath}`)
+const setWebviewCurrentUrl = inject<(filePath: string, url: string) => void>('setWebviewCurrentUrl', () => {})
+const webviewCurrentUrls = inject<Record<string, string>>('webviewCurrentUrls', {})
+
+const isBlank = computed(() => props.filePath.startsWith('__blank_'))
+const initialUrl = computed(() => isBlank.value ? '' : `file://${props.filePath}`)
+
+const resolvedStartUrl = webviewCurrentUrls[props.filePath] ?? initialUrl.value
+const addressInput = ref(resolvedStartUrl)
+const currentUrl = ref(resolvedStartUrl)
 
 const fileName = computed(() => {
+  if (isBlank.value) return '新标签页'
   const parts = props.filePath.replace(/\\/g, '/').split('/')
   return parts[parts.length - 1] || props.filePath
 })
 
+function onWebviewNavigate(e: any) {
+  const url: string = e.url || ''
+  if (!url || url === 'about:blank') return
+  addressInput.value = url
+  setWebviewCurrentUrl(props.filePath, url)
+}
+
 onMounted(() => {
-  addressInput.value = initialUrl.value
-  currentUrl.value = initialUrl.value
+  const wv = webviewRef.value
+  if (!wv) return
+  wv.addEventListener('did-navigate', onWebviewNavigate)
+  wv.addEventListener('did-navigate-in-page', onWebviewNavigate)
+  const targetUrl = currentUrl.value
+  if (targetUrl && targetUrl !== 'about:blank') {
+    nextTick(() => {
+      try { wv.loadURL(targetUrl) } catch {}
+    })
+  }
+})
+
+onUnmounted(() => {
+  const wv = webviewRef.value
+  if (wv) {
+    wv.removeEventListener('did-navigate', onWebviewNavigate)
+    wv.removeEventListener('did-navigate-in-page', onWebviewNavigate)
+  }
 })
 
 function navigate() {
@@ -56,6 +86,11 @@ function goForward() {
 }
 
 watch(() => props.filePath, () => {
+  if (props.filePath.startsWith('__blank_')) {
+    addressInput.value = ''
+    currentUrl.value = ''
+    return
+  }
   const url = `file://${props.filePath}`
   addressInput.value = url
   currentUrl.value = url
@@ -105,13 +140,13 @@ watch(() => props.filePath, () => {
       </button>
     </div>
     <webview
-      v-show="!dragActive"
       ref="webviewRef"
       class="webview-frame"
-      :src="currentUrl"
+      :class="{ 'no-pointer': dragActive }"
+      :src="currentUrl || 'about:blank'"
       allowpopups
     />
-    <div v-if="dragActive" class="webview-drag-placeholder"></div>
+    <div v-if="dragActive" class="webview-interaction-shield"></div>
   </div>
 </template>
 
@@ -122,6 +157,7 @@ watch(() => props.filePath, () => {
   display: flex;
   flex-direction: column;
   background: var(--c-base);
+  position: relative;
 }
 
 .webview-toolbar {
@@ -199,9 +235,13 @@ watch(() => props.filePath, () => {
   background: #fff;
 }
 
-.webview-drag-placeholder {
-  flex: 1;
-  width: 100%;
-  background: var(--c-base);
+.webview-frame.no-pointer {
+  pointer-events: none;
+}
+
+.webview-interaction-shield {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
 }
 </style>

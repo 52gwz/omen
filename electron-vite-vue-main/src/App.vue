@@ -5,7 +5,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 import WorkspacePane from './components/WorkspacePane.vue'
 import { MIN_SPLIT_RATIO } from './types/workspace'
-import type { DragTabState, DropPosition, DropTarget, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
+import type { CodeReference, DragTabState, DropPosition, DropTarget, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
 
 const SKILLS_TAB_ID = '__skills__'
 const WEBVIEW_PREFIX = '__webview__:'
@@ -309,6 +309,18 @@ function addNewTab(paneId?: string) {
   c.activePaneId = pane.id
 }
 
+let blankWebviewCounter = 0
+
+function addNewWebviewTab(paneId?: string) {
+  const blankId = `__blank_${Date.now()}_${blankWebviewCounter++}`
+  const c = getCtx()
+  const pane = paneId ? findPaneById(c.root, paneId) : getActivePane(c)
+  if (!pane) return
+  pane.tabs.push(createTab(WEBVIEW_PREFIX + blankId))
+  pane.activeTabIdx = pane.tabs.length - 1
+  c.activePaneId = pane.id
+}
+
 function openSkills() {
   if (focusExistingTab(SKILLS_TAB_ID)) return
   const c = getCtx()
@@ -521,6 +533,26 @@ function onSplitResizeEnd() {
   splitResizeActive.value = false
 }
 
+const webviewCurrentUrls = reactive<Record<string, string>>({})
+
+const pendingCodeReferences = reactive<CodeReference[]>([])
+
+function addCodeReference(ref: CodeReference) {
+  pendingCodeReferences.push(ref)
+}
+
+function removeCodeReference(index: number) {
+  pendingCodeReferences.splice(index, 1)
+}
+
+function clearCodeReferences() {
+  pendingCodeReferences.splice(0)
+}
+
+function setWebviewCurrentUrl(filePath: string, url: string) {
+  webviewCurrentUrls[filePath] = url
+}
+
 const allOpenTabs = computed<MentionTab[]>(() => {
   const result: MentionTab[] = []
   const seen = new Set<string>()
@@ -531,12 +563,22 @@ const allOpenTabs = computed<MentionTab[]>(() => {
         seen.add(tab.convId)
         if (tab.convId.startsWith(EDITOR_PREFIX)) {
           const fp = tab.convId.slice(EDITOR_PREFIX.length)
-          const filename = fp.replace(/\\/g, '/').split('/').pop() || fp
-          result.push({ key: filename, value: tab.convId, type: 'file' })
+          const normalized = fp.replace(/\\/g, '/')
+          const filename = normalized.split('/').pop() || fp
+          const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : ''
+          result.push({ key: filename, value: tab.convId, type: 'file', path: dir })
         } else if (tab.convId.startsWith(WEBVIEW_PREFIX)) {
-          const url = tab.convId.slice(WEBVIEW_PREFIX.length)
-          const label = url.replace(/^https?:\/\//, '').split('/')[0] || url
-          result.push({ key: label, value: tab.convId, type: 'webview' })
+          const fp = tab.convId.slice(WEBVIEW_PREFIX.length)
+          const currentUrl = webviewCurrentUrls[fp] ?? (fp.startsWith('__blank_') ? '' : fp)
+          let label: string
+          if (!currentUrl || currentUrl === 'about:blank') {
+            label = '浏览器'
+          } else if (currentUrl.startsWith('file://')) {
+            label = currentUrl.replace(/^file:\/\//, '').split('/').pop() || fp
+          } else {
+            label = currentUrl.replace(/^https?:\/\//, '').split('/')[0] || currentUrl
+          }
+          result.push({ key: label, value: tab.convId, type: 'webview', currentUrl })
         }
       }
     })
@@ -553,9 +595,27 @@ function openTabById(tabId: string) {
   }
 }
 
+const activeTabConvIds = computed<Set<string>>(() => {
+  const ids = new Set<string>()
+  for (const ctx of Object.values(tabContexts)) {
+    forEachPane(ctx.root, (pane) => {
+      const convId = pane.tabs[pane.activeTabIdx]?.convId
+      if (convId) ids.add(convId)
+    })
+  }
+  return ids
+})
+
 provide('openTabs', allOpenTabs)
 provide('openTabById', openTabById)
 provide('appActiveConvId', activeConvId)
+provide('activeTabConvIds', activeTabConvIds)
+provide('setWebviewCurrentUrl', setWebviewCurrentUrl)
+provide('webviewCurrentUrls', webviewCurrentUrls)
+provide('pendingCodeReferences', pendingCodeReferences)
+provide('addCodeReference', addCodeReference)
+provide('removeCodeReference', removeCodeReference)
+provide('clearCodeReferences', clearCodeReferences)
 
 async function openWelcomeConversation(payload: WelcomeSendPayload) {
   const meta = await window.conversationApi.create('新对话', activeProject.value?.id)
@@ -625,6 +685,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         @focus-pane="focusPane"
         @switch-tab="switchTab"
         @add-tab="addNewTab"
+        @add-webview-tab="addNewWebviewTab"
         @close-tab="closeTab"
         @tab-drag-start="onTabDragStart"
         @tab-drag-end="onTabDragEnd"
@@ -672,7 +733,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
 
 .settings-fab {
   position: absolute;
-  top: 14px;
+  bottom: 14px;
   right: 14px;
   z-index: 20;
   display: flex;
@@ -686,6 +747,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   color: var(--c-subtext0);
   cursor: pointer;
   transition: color 0.2s, background 0.2s, border-color 0.2s;
+  -webkit-app-region: no-drag;
 }
 
 .settings-fab:hover {

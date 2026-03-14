@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import FileTreeNode from './FileTreeNode.vue'
 
@@ -39,6 +39,39 @@ const dirChildren = reactive<Record<string, FileEntry[]>>({})
 const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: string; type: 'conv' | 'project' }>({
   visible: false, x: 0, y: 0, targetId: '', type: 'conv',
 })
+
+const collapsed = ref(false)
+const sidebarWidth = ref(240)
+const widthBeforeCollapse = ref(240)
+const isResizing = ref(false)
+const actualWidth = computed(() => collapsed.value ? 48 : sidebarWidth.value)
+
+function toggleCollapse() {
+  if (collapsed.value) {
+    collapsed.value = false
+    sidebarWidth.value = widthBeforeCollapse.value
+  } else {
+    widthBeforeCollapse.value = sidebarWidth.value
+    collapsed.value = true
+  }
+}
+
+function onResizeStart(e: MouseEvent) {
+  if (collapsed.value) return
+  isResizing.value = true
+  const startX = e.clientX
+  const startW = sidebarWidth.value
+  const onMove = (ev: MouseEvent) => {
+    sidebarWidth.value = Math.max(180, Math.min(480, startW + (ev.clientX - startX)))
+  }
+  const onUp = () => {
+    isResizing.value = false
+    document.removeEventListener('mousemove', onMove)
+    document.removeEventListener('mouseup', onUp)
+  }
+  document.addEventListener('mousemove', onMove)
+  document.addEventListener('mouseup', onUp)
+}
 
 function openSkillsTab() {
   emit('openSkills')
@@ -224,11 +257,11 @@ onMounted(() => {
   loadConversations()
   if (!props.projectId) loadProjects()
   else loadFileTree()
-  document.addEventListener('click', closeContextMenu)
+  document.addEventListener('mousedown', closeContextMenu)
 })
 
 onUnmounted(() => {
-  document.removeEventListener('click', closeContextMenu)
+  document.removeEventListener('mousedown', closeContextMenu)
   stopWatching()
 })
 
@@ -241,9 +274,18 @@ defineExpose({ loadConversations, setActiveConv })
 </script>
 
 <template>
-  <div class="sidebar">
+  <div class="sidebar" :class="{ 'sidebar-collapsed': collapsed, resizing: isResizing }" :style="{ width: actualWidth + 'px', minWidth: actualWidth + 'px' }">
     <div class="titlebar-spacer"></div>
-    <div class="sidebar-header">
+
+    <div v-if="collapsed" class="collapsed-view">
+      <button class="collapse-toggle-btn" title="展开侧边栏" @click="toggleCollapse">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="9 18 15 12 9 6" />
+        </svg>
+      </button>
+    </div>
+
+    <div v-show="!collapsed" class="sidebar-header">
       <!-- 项目模式 -->
       <template v-if="projectId">
         <button class="back-btn" title="返回" @click="emit('closeProject')">
@@ -273,6 +315,12 @@ defineExpose({ loadConversations, setActiveConv })
       </template>
 
       <div class="header-actions">
+        <button class="header-icon-btn" title="收起侧边栏" @click="toggleCollapse">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
         <button class="header-icon-btn" :title="theme === 'light' ? '切换暗色' : '切换明亮'" @click="toggleTheme">
           <svg v-if="theme === 'light'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
@@ -292,6 +340,7 @@ defineExpose({ loadConversations, setActiveConv })
       </div>
     </div>
 
+    <div v-show="!collapsed" class="sidebar-body">
     <!-- 普通模式：项目区 -->
     <template v-if="!projectId">
       <div class="projects-section">
@@ -436,12 +485,16 @@ defineExpose({ loadConversations, setActiveConv })
         </div>
       </div>
     </div>
+    </div>
+
+    <div v-show="!collapsed" class="resize-handle" @mousedown.prevent="onResizeStart" @dblclick="sidebarWidth = 240"></div>
 
     <Teleport to="body">
       <div
         v-if="contextMenu.visible"
         class="ctx-menu"
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+        @mousedown.stop
       >
         <button @click="handleContextAction('delete')">
           {{ contextMenu.type === 'project' ? '删除项目' : '删除对话' }}
@@ -453,8 +506,6 @@ defineExpose({ loadConversations, setActiveConv })
 
 <style scoped>
 .sidebar {
-  width: 240px;
-  min-width: 240px;
   height: 100vh;
   background: var(--c-mantle);
   border-right: 1px solid var(--c-surface0);
@@ -463,6 +514,72 @@ defineExpose({ loadConversations, setActiveConv })
   position: relative;
   user-select: none;
   -webkit-app-region: drag;
+  transition: width 0.2s ease, min-width 0.2s ease;
+}
+
+.sidebar.resizing {
+  transition: none;
+}
+
+.collapsed-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.collapse-toggle-btn {
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s, background 0.2s;
+}
+
+.collapse-toggle-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.sidebar-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.resize-handle {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  -webkit-app-region: no-drag;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.resize-handle:hover::after {
+  background: var(--c-blue);
 }
 
 .titlebar-spacer {
