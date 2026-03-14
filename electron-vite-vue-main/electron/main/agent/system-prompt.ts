@@ -41,6 +41,15 @@ export function buildSystemPrompt(cwd: string, skills: SkillMetadata[] = [], tab
 5. **list_directory** - 列出目录内容，了解项目结构。
 6. **grep_search** - 用正则表达式搜索文件内容，支持递归搜索和文件类型过滤。
 7. **edit_file** - 通过精确字符串匹配局部替换文件内容。old_string 必须与文件中完全一致。
+8. **update_plan** - 更新任务计划/待办清单，用于跟踪多步骤任务的进度。
+
+### 任务管理
+
+当你执行包含 3 个及以上步骤的复杂任务时，应主动使用 update_plan 工具来规划和跟踪进度：
+- 在开始执行前，创建完整的计划，将第一步设为 in_progress
+- 每完成一个步骤后，更新计划（标记完成并将下一步设为 in_progress）
+- 同一时间最多一个步骤处于 in_progress 状态
+- 简单任务（1-2 步）无需使用此工具
 
 ### 使用原则
 

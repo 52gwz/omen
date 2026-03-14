@@ -535,18 +535,30 @@ function onSplitResizeEnd() {
 
 const webviewCurrentUrls = reactive<Record<string, string>>({})
 
-const pendingCodeReferences = reactive<CodeReference[]>([])
+const codeRefStore = reactive(new Map<string, CodeReference>())
 
 function addCodeReference(ref: CodeReference) {
-  pendingCodeReferences.push(ref)
-}
+  const id = crypto.randomUUID()
+  codeRefStore.set(id, ref)
 
-function removeCodeReference(index: number) {
-  pendingCodeReferences.splice(index, 1)
-}
-
-function clearCodeReferences() {
-  pendingCodeReferences.splice(0)
+  let target: InstanceType<typeof ChatView> | undefined
+  const active = activeConvId.value
+  if (chatRefs.value[active]) {
+    target = chatRefs.value[active]
+  }
+  if (!target) {
+    for (const convId of activeTabConvIds.value) {
+      if (chatRefs.value[convId]) {
+        target = chatRefs.value[convId]
+        break
+      }
+    }
+  }
+  if (!target) {
+    const refs = Object.values(chatRefs.value)
+    if (refs.length) target = refs[0]
+  }
+  target?.insertCodeReference(id, ref)
 }
 
 function setWebviewCurrentUrl(filePath: string, url: string) {
@@ -612,10 +624,8 @@ provide('appActiveConvId', activeConvId)
 provide('activeTabConvIds', activeTabConvIds)
 provide('setWebviewCurrentUrl', setWebviewCurrentUrl)
 provide('webviewCurrentUrls', webviewCurrentUrls)
-provide('pendingCodeReferences', pendingCodeReferences)
 provide('addCodeReference', addCodeReference)
-provide('removeCodeReference', removeCodeReference)
-provide('clearCodeReferences', clearCodeReferences)
+provide('codeRefStore', codeRefStore)
 
 async function openWelcomeConversation(payload: WelcomeSendPayload) {
   const meta = await window.conversationApi.create('新对话', activeProject.value?.id)

@@ -126,6 +126,32 @@ export const toolDefinitions: ToolDefinition[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'update_plan',
+      description: '更新任务计划/待办清单。用于记录和跟踪多步骤任务的进度。同一时间最多一个步骤处于 in_progress 状态。在执行复杂的多步骤任务时，应主动使用此工具来规划和跟踪进度。',
+      parameters: {
+        type: 'object',
+        properties: {
+          explanation: { type: 'string', description: '可选的说明文字，解释当前计划的变更原因' },
+          plan: {
+            type: 'array',
+            description: '计划步骤列表',
+            items: {
+              type: 'object',
+              properties: {
+                step: { type: 'string', description: '步骤描述' },
+                status: { type: 'string', description: '步骤状态: pending | in_progress | completed' },
+              },
+              required: ['step', 'status'],
+            },
+          },
+        },
+        required: ['plan'],
+      },
+    },
+  },
 ]
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB

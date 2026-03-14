@@ -30,6 +30,11 @@ interface ToolCallInfo {
   streamOutput?: string
 }
 
+interface PlanStep {
+  step: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -37,6 +42,7 @@ interface ChatMessage {
   reasoningExpanded?: boolean
   images?: string[]
   toolCalls?: ToolCallInfo[]
+  planSteps?: PlanStep[]
 }
 
 function renderMarkdown(raw: string): string {
@@ -349,6 +355,9 @@ async function loadMessages() {
         result: tc.result,
       }))
     }
+    if ((m as any).planSteps?.length) {
+      msg.planSteps = (m as any).planSteps
+    }
     messages.push(msg)
   }
   scrollToBottom(true)
@@ -369,6 +378,9 @@ function scheduleSave() {
           status: tc.status,
           result: tc.result,
         }))
+      }
+      if (m.planSteps?.length) {
+        (stored as any).planSteps = m.planSteps
       }
       return stored
     })
@@ -559,6 +571,15 @@ function sendAgentMessage(text: string) {
     }
   })
 
+  const offPlanUpdate = window.agentChat.onPlanUpdate(({ requestId: rid, plan }) => {
+    if (rid !== requestId) return
+    const msg = getLastAssistant()
+    if (msg) {
+      msg.planSteps = plan.map(p => ({ step: p.step, status: p.status as PlanStep['status'] }))
+      scrollToBottom()
+    }
+  })
+
   const offNewTurn = window.agentChat.onNewTurn(({ requestId: rid }) => {
     if (rid !== requestId) return
     messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [] })
@@ -569,7 +590,7 @@ function sendAgentMessage(text: string) {
     if (rid !== requestId) return
     isStreaming.value = false
     const msg = getLastAssistant()
-    if (msg && !msg.content && !msg.toolCalls?.length && !msg.reasoning) {
+    if (msg && !msg.content && !msg.toolCalls?.length && !msg.reasoning && !msg.planSteps?.length) {
       messages.pop()
     }
     setTimeout(() => { const lastMsg = getLastAssistant(); if (lastMsg) lastMsg.reasoningExpanded = false }, REASONING_COLLAPSE_DELAY)
@@ -592,6 +613,7 @@ function sendAgentMessage(text: string) {
     offToolRunning()
     offToolOutputStream()
     offToolResult()
+    offPlanUpdate()
     offNewTurn()
     offDone()
     offError()
@@ -658,6 +680,67 @@ function rejectTool(toolCallId: string) {
 
 function killCommand(toolCallId: string) {
   window.agentChat.killCommand(toolCallId)
+}
+
+const copiedMsgIndex = ref<number | null>(null)
+
+function copyMessage(msg: ChatMessage) {
+  const text = msg.content || ''
+  navigator.clipboard.writeText(text).then(() => {
+    const idx = messages.indexOf(msg)
+    copiedMsgIndex.value = idx
+    setTimeout(() => { copiedMsgIndex.value = null }, 1500)
+  })
+}
+
+const editingIndex = ref<number | null>(null)
+const editingContent = ref('')
+
+function editMessage(index: number) {
+  const msg = messages[index]
+  if (!msg) return
+  editingIndex.value = index
+  editingContent.value = msg.content
+  nextTick(() => {
+    const ta = document.querySelector('.edit-textarea') as HTMLTextAreaElement
+    if (ta) {
+      ta.focus()
+      ta.setSelectionRange(ta.value.length, ta.value.length)
+      autoResizeTextarea(ta)
+    }
+  })
+}
+
+function autoResizeTextarea(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = el.scrollHeight + 'px'
+}
+
+function confirmEdit() {
+  const idx = editingIndex.value
+  if (idx === null) return
+  const text = editingContent.value.trim()
+  if (!text) { cancelEdit(); return }
+
+  const msg = messages[idx]
+  messages.splice(idx + 1)
+  msg.content = text
+  if (msg.images) delete (msg as any).images
+  scheduleSave()
+  editingIndex.value = null
+
+  if (msg.role === 'user') {
+    scrollToBottom(true)
+    if (chatMode.value === 'agent') {
+      sendAgentMessage(text)
+    } else {
+      sendChatMessage(text)
+    }
+  }
+}
+
+function cancelEdit() {
+  editingIndex.value = null
 }
 
 function selectMode(mode: ChatMode) {
@@ -822,7 +905,7 @@ defineExpose({ loadConfig, sendWithContent })
           </div>
 
           <!-- Images in user message -->
-          <div v-if="msg.images?.length" class="message-images">
+          <div v-if="msg.images?.length && editingIndex !== i" class="message-images">
             <img
               v-for="(img, imgIdx) in msg.images"
               :key="imgIdx"
@@ -832,19 +915,58 @@ defineExpose({ loadConfig, sendWithContent })
             />
           </div>
 
+          <!-- Inline editing -->
+          <div v-if="editingIndex === i" class="edit-inline">
+            <textarea
+              class="edit-textarea"
+              v-model="editingContent"
+              @keydown.enter.exact.prevent="confirmEdit"
+              @keydown.escape="cancelEdit"
+              @input="autoResizeTextarea($event.target as HTMLTextAreaElement)"
+            ></textarea>
+            <div class="edit-actions">
+              <button class="edit-cancel-btn" @click="cancelEdit">取消</button>
+              <button class="edit-confirm-btn" @click="confirmEdit">确认</button>
+            </div>
+          </div>
+
           <!-- Text content -->
-          <div
-            v-if="msg.content && msg.role === 'user'"
-            class="message-content user-message-content"
-            v-html="renderUserContent(msg.content)"
-            @click="handleMentionClick"
-          ></div>
-          <div v-if="msg.content && msg.role === 'assistant'" class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+          <template v-else>
+            <div
+              v-if="msg.content && msg.role === 'user'"
+              class="message-content user-message-content"
+              v-html="renderUserContent(msg.content)"
+              @click="handleMentionClick"
+            ></div>
+            <div v-if="msg.content && msg.role === 'assistant'" class="message-content markdown-body" v-html="renderMarkdown(msg.content)"></div>
+          </template>
+
+          <!-- Plan checklist -->
+          <div v-if="msg.planSteps?.length" class="plan-card">
+            <div class="plan-header">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+              <span>任务计划</span>
+              <span class="plan-progress">{{ msg.planSteps.filter(s => s.status === 'completed').length }}/{{ msg.planSteps.length }}</span>
+            </div>
+            <ul class="plan-steps">
+              <li v-for="(step, si) in msg.planSteps" :key="si" class="plan-step" :class="'plan-step--' + step.status">
+                <span class="plan-step-icon">
+                  <svg v-if="step.status === 'completed'" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <span v-else-if="step.status === 'in_progress'" class="plan-spinner"></span>
+                  <span v-else class="plan-circle"></span>
+                </span>
+                <span class="plan-step-text">{{ step.step }}</span>
+              </li>
+            </ul>
+          </div>
 
           <!-- Tool calls (agent mode) -->
           <template v-if="msg.toolCalls?.length">
             <ToolCallCard
-              v-for="tc in msg.toolCalls"
+              v-for="tc in msg.toolCalls.filter(t => t.name !== 'update_plan')"
               :key="tc.id"
               :name="tc.name"
               :arguments="tc.arguments"
@@ -859,6 +981,25 @@ defineExpose({ loadConfig, sendWithContent })
 
           <!-- Streaming cursor -->
           <span v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.toolCalls?.some(t => t.status === 'streaming' || t.status === 'pending' || t.status === 'running')" class="cursor-blink">▍</span>
+
+          <!-- Hover action buttons -->
+          <div class="msg-actions" v-if="!isStreaming || i !== messages.length - 1">
+            <button class="msg-action-btn" :class="{ copied: copiedMsgIndex === i }" title="复制" @click.stop="copyMessage(msg)">
+              <svg v-if="copiedMsgIndex !== i" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+            </button>
+            <button class="msg-action-btn" title="编辑（回滚到此消息）" @click.stop="editMessage(i)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1130,6 +1271,11 @@ defineExpose({ loadConfig, sendWithContent })
 
 .message-row {
   display: flex;
+  position: relative;
+}
+
+.message-row:hover {
+  z-index: 5;
 }
 
 .message-row.user {
@@ -1821,6 +1967,119 @@ defineExpose({ loadConfig, sendWithContent })
   position: relative;
 }
 
+/* Inline editing */
+.edit-inline {
+  width: 100%;
+}
+
+.edit-textarea {
+  width: 100%;
+  min-height: 1.6em;
+  max-height: 40vh;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  resize: none;
+  overflow-y: auto;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.edit-cancel-btn,
+.edit-confirm-btn {
+  padding: 3px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--c-surface1);
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.edit-cancel-btn {
+  background: var(--c-surface0);
+  color: var(--c-subtext0);
+}
+
+.edit-cancel-btn:hover {
+  background: var(--c-surface-hover, var(--c-surface1));
+}
+
+.edit-confirm-btn {
+  background: var(--c-blue, #1e66f5);
+  color: #fff;
+  border-color: transparent;
+}
+
+.edit-confirm-btn:hover {
+  opacity: 0.85;
+}
+
+/* Hover action buttons */
+.msg-actions {
+  position: absolute;
+  bottom: 0;
+  right: 4px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 6;
+  transform: translateY(100%);
+  padding-top: 8px;
+}
+
+.message-bubble:hover .msg-actions,
+.msg-actions:hover {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.assistant .msg-actions {
+  right: auto;
+  left: 4px;
+}
+
+.msg-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--c-surface1);
+  background: var(--c-base);
+  color: var(--c-subtext0);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  padding: 0;
+}
+
+.msg-action-btn:hover {
+  background: var(--c-surface-hover, var(--c-surface0));
+  color: var(--c-text);
+  border-color: var(--c-surface-hover, var(--c-overlay0));
+}
+
+.msg-action-btn.copied {
+  color: var(--c-green, #40a02b);
+  border-color: var(--c-green, #40a02b);
+}
+
 .debug-msg-badge {
   position: absolute;
   top: -8px;
@@ -1969,6 +2228,105 @@ defineExpose({ loadConfig, sendWithContent })
 .debug-slide-leave-to {
   transform: translateX(100%);
   opacity: 0;
+}
+
+/* Plan card */
+.plan-card {
+  margin: 8px 0;
+  border: 1px solid var(--c-surface2);
+  border-radius: 8px;
+  background: var(--c-mantle);
+  overflow: hidden;
+}
+
+.plan-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-subtext0);
+  border-bottom: 1px solid var(--c-surface0);
+}
+
+.plan-header svg {
+  color: var(--c-blue);
+  flex-shrink: 0;
+}
+
+.plan-progress {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-overlay0);
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+}
+
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--c-overlay0);
+  transition: color 0.2s;
+}
+
+.plan-step--completed {
+  color: var(--c-overlay0);
+}
+
+.plan-step--completed .plan-step-text {
+  text-decoration: line-through;
+  text-decoration-color: var(--c-surface2);
+}
+
+.plan-step--in_progress {
+  color: var(--c-text);
+}
+
+.plan-step-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.plan-step--completed .plan-step-icon svg {
+  color: var(--c-green);
+}
+
+.plan-circle {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--c-surface2);
+}
+
+.plan-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--c-surface1);
+  border-top-color: var(--c-blue);
+  animation: plan-spin 0.8s linear infinite;
+}
+
+@keyframes plan-spin {
+  to { transform: rotate(360deg); }
+}
+
+.plan-step-text {
+  line-height: 1.4;
 }
 </style>
 

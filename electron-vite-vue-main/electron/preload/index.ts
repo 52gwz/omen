@@ -135,6 +135,11 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:error', handler)
     return () => { ipcRenderer.off('agent:error', handler) }
   },
+  onPlanUpdate(callback: (data: { requestId: string; toolCallId: string; explanation: string | null; plan: Array<{ step: string; status: string }> }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:plan-update', handler)
+    return () => { ipcRenderer.off('agent:plan-update', handler) }
+  },
 })
 
 // --------- Dialog API ---------

@@ -24,10 +24,6 @@ const props = defineProps<{
   filePath: string
 }>()
 
-const emit = defineEmits<{
-  close: []
-}>()
-
 const addCodeReference = inject<(ref: CodeReference) => void>('addCodeReference')
 
 const { theme } = useTheme()
@@ -39,6 +35,50 @@ const modified = ref(false)
 const saving = ref(false)
 const previewMode = ref(false)
 const rawContent = ref('')
+const showSelectionToolbar = ref(false)
+const toolbarPos = ref({ top: 0, left: 0 })
+
+const toolbarStyle = computed(() => ({
+  top: `${toolbarPos.value.top}px`,
+  left: `${toolbarPos.value.left}px`,
+}))
+
+function addSelectionToChat() {
+  if (!editor.value || !addCodeReference) return
+  const selection = editor.value.getSelection()
+  if (!selection || selection.isEmpty()) return
+  const model = editor.value.getModel()
+  const selectedText = model?.getValueInRange(selection)
+  if (!selectedText) return
+  addCodeReference({
+    filePath: props.filePath,
+    text: selectedText,
+    startLine: selection.startLineNumber,
+    endLine: selection.endLineNumber,
+    language: getLang(props.filePath),
+  })
+  showSelectionToolbar.value = false
+}
+
+function updateToolbarPosition() {
+  if (!editor.value) return
+  const selection = editor.value.getSelection()
+  if (!selection || selection.isEmpty()) {
+    showSelectionToolbar.value = false
+    return
+  }
+  const endPos = selection.getEndPosition()
+  const visiblePos = editor.value.getScrolledVisiblePosition(endPos)
+  if (!visiblePos) {
+    showSelectionToolbar.value = false
+    return
+  }
+  toolbarPos.value = {
+    top: visiblePos.top + visiblePos.height + 6,
+    left: Math.max(8, visiblePos.left),
+  }
+  showSelectionToolbar.value = true
+}
 
 const isMarkdown = computed(() => {
   const ext = props.filePath.split('.').pop()?.toLowerCase()
@@ -240,11 +280,6 @@ onBeforeUnmount(() => {
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
             <polyline points="17 21 17 13 7 13 7 21" />
             <polyline points="7 3 7 8 15 8" />
-          </svg>
-        </button>
-        <button class="editor-action-btn close-btn" title="关闭编辑器" @click="emit('close')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
       </div>

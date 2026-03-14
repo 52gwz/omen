@@ -66,6 +66,43 @@ function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCal
   }
 }
 
+const STREAM_READ_TIMEOUT_MS = 90_000
+
+function readWithTimeout(
+  reader: { read(): Promise<{ value: Uint8Array | undefined; done: boolean }> },
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ value: Uint8Array | undefined; done: boolean }> {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        reject(new Error(`SSE 流读取超时（${timeoutMs / 1000}s 内无数据），连接可能已断开`))
+      }
+    }, timeoutMs)
+
+    const onAbort = () => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timer)
+        reject(signal!.reason ?? new DOMException('Aborted', 'AbortError'))
+      }
+    }
+    if (signal?.aborted) { clearTimeout(timer); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); return }
+    signal?.addEventListener('abort', onAbort, { once: true })
+
+    reader.read().then(
+      (result) => {
+        if (!settled) { settled = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); resolve(result) }
+      },
+      (err) => {
+        if (!settled) { settled = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(err) }
+      },
+    )
+  })
+}
+
 async function streamOnce(params: {
   allMessages: Message[]
   model: string
@@ -106,6 +143,7 @@ async function streamOnce(params: {
   let fullReasoning = ''
   let finishReason = 'stop'
   const toolCallAccum = new Map<number, ToolCall>()
+  const toolCallIndexMap = new Map<number, number>()
 
   function emitContent(text: string) {
     if (!text) return
@@ -113,9 +151,11 @@ async function streamOnce(params: {
     sender.send('agent:stream-chunk', { requestId, delta: text })
   }
 
+  try {
+  let streamDone = false
   while (true) {
     if (signal?.aborted) break
-    const { value, done } = await reader.read()
+    const { value, done } = await readWithTimeout(reader, STREAM_READ_TIMEOUT_MS, signal)
     if (done) break
 
     buffer += decoder.decode(value, { stream: true })
@@ -126,7 +166,7 @@ async function streamOnce(params: {
       const trimmed = line.trim()
       if (!trimmed || !trimmed.startsWith('data:')) continue
       const data = trimmed.slice(5).trim()
-      if (data === '[DONE]') continue
+      if (data === '[DONE]') { streamDone = true; break }
 
       try {
         const json = JSON.parse(data)
@@ -154,9 +194,12 @@ async function streamOnce(params: {
           for (const d of delta.tool_calls) {
             const tc = toolCallAccum.get(d.index)
             if (tc) {
+              if (!toolCallIndexMap.has(d.index)) {
+                toolCallIndexMap.set(d.index, toolCallIndexMap.size)
+              }
               sender.send('agent:tool-call-streaming', {
                 requestId,
-                index: d.index,
+                index: toolCallIndexMap.get(d.index)!,
                 id: tc.id,
                 name: tc.function.name,
                 argumentsDelta: d.function?.arguments || '',
@@ -166,11 +209,19 @@ async function streamOnce(params: {
         }
       } catch { /* skip malformed JSON */ }
     }
+    if (streamDone) break
+  }
+  } finally {
+    try { reader.cancel() } catch { /* already closed */ }
   }
 
   const toolCalls = Array.from(toolCallAccum.values())
   return { content: fullContent.trim(), reasoning: fullReasoning.trim(), toolCalls, finishReason }
 }
+
+const VIRTUAL_TOOLS = new Set([
+  'update_plan',
+])
 
 const SAFE_TOOLS = new Set([
   'read_file',
@@ -289,6 +340,30 @@ export async function runAgentLoop(params: AgentRunParams) {
           requestId,
           toolCallId: tc.id,
           result: errorContent,
+          rejected: false,
+        })
+        continue
+      }
+
+      if (VIRTUAL_TOOLS.has(tc.function.name)) {
+        if (tc.function.name === 'update_plan') {
+          sender.send('agent:plan-update', {
+            requestId,
+            toolCallId: tc.id,
+            explanation: (args.explanation as string) || null,
+            plan: args.plan as Array<{ step: string; status: string }>,
+          })
+        }
+        const toolMsg: Message = {
+          role: 'tool',
+          content: 'Plan updated',
+          tool_call_id: tc.id,
+        }
+        allMessages.push(toolMsg)
+        sender.send('agent:tool-result', {
+          requestId,
+          toolCallId: tc.id,
+          result: 'Plan updated',
           rejected: false,
         })
         continue

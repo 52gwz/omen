@@ -616,7 +616,6 @@ onBeforeUnmount(() => {
       <MonacoEditor
         v-if="activeConvId.startsWith(editorPrefix)"
         :file-path="activeConvId.slice(editorPrefix.length)"
-        @close="emit('closeTab', node.pane.id, node.pane.activeTabIdx)"
       />
 
       <WelcomeScreen

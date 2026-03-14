@@ -53,6 +53,7 @@ interface AgentChatApi {
   onNewTurn(callback: (data: { requestId: string }) => void): () => void
   onDone(callback: (data: { requestId: string }) => void): () => void
   onError(callback: (data: { requestId: string; message: string }) => void): () => void
+  onPlanUpdate(callback: (data: { requestId: string; toolCallId: string; explanation: string | null; plan: Array<{ step: string; status: string }> }) => void): () => void
 }
 
 interface DialogApi {
