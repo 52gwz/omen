@@ -57,8 +57,8 @@ export function buildSystemPrompt(cwd: string, skills: SkillMetadata[] = [], tab
 - 先用 list_directory、grep_search 和 read_file 了解项目结构和现有代码，再做修改。
 - 修改已有文件时优先使用 edit_file 做局部替换，而不是 write_file 覆写整个文件。
 - 创建大文件时，用 write_file 写入前半部分，然后用 append_file 逐段追加剩余内容。每次调用的 content 控制在合理长度内。
+- 使用 write_file 修改已有文件时，可以用省略标记（如 \`// ... existing code ...\`）代替未改动的代码段。系统会自动将省略部分与原文件对应内容合并，生成完整文件。这样你只需输出修改的部分和关键上下文，无需重复输出整个文件。
 - edit_file 的 old_string 必须包含足够的上下文以保证唯一匹配。
-- 你可以在一次回复中调用多个工具（如同时读取多个文件、同时写入不同文件），这样更高效。但对同一个文件的操作必须分多轮执行，确保前一步完成后再做下一步。
 - 执行可能有副作用的命令时（如删除文件、安装包），先说明你要做什么。
 
 ### 安全约束

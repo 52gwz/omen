@@ -771,6 +771,26 @@ ipcMain.handle('fs:write-file', async (_, filePath: string, content: string): Pr
   }
 })
 
+ipcMain.handle('fs:create-file', async (_, filePath: string): Promise<{ error?: string }> => {
+  try {
+    if (fs.existsSync(filePath)) return { error: '文件已存在' }
+    fs.writeFileSync(filePath, '', 'utf-8')
+    return {}
+  } catch (e: any) {
+    return { error: e.message }
+  }
+})
+
+ipcMain.handle('fs:create-dir', async (_, dirPath: string): Promise<{ error?: string }> => {
+  try {
+    if (fs.existsSync(dirPath)) return { error: '文件夹已存在' }
+    fs.mkdirSync(dirPath, { recursive: true })
+    return {}
+  } catch (e: any) {
+    return { error: e.message }
+  }
+})
+
 // ---- File Watcher ----
 
 const activeWatchers = new Map<string, fs.FSWatcher>()

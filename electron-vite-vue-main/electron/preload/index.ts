@@ -252,6 +252,12 @@ contextBridge.exposeInMainWorld('fsApi', {
   writeFile(filePath: string, content: string): Promise<{ error?: string }> {
     return ipcRenderer.invoke('fs:write-file', filePath, content)
   },
+  createFile(filePath: string): Promise<{ error?: string }> {
+    return ipcRenderer.invoke('fs:create-file', filePath)
+  },
+  createDir(dirPath: string): Promise<{ error?: string }> {
+    return ipcRenderer.invoke('fs:create-dir', dirPath)
+  },
 })
 
 // --------- Preload scripts loading ---------

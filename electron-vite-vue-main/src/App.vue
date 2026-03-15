@@ -5,7 +5,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 import WorkspacePane from './components/WorkspacePane.vue'
 import { MIN_SPLIT_RATIO } from './types/workspace'
-import type { CodeReference, DragTabState, DropPosition, DropTarget, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
+import type { CodeReference, DragTabState, DropPosition, DropTarget, FileReference, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
 
 const SKILLS_TAB_ID = '__skills__'
 const WEBVIEW_PREFIX = '__webview__:'
@@ -220,6 +220,36 @@ function getActivePane(ctx = getCtx()): PaneState {
   return fallback
 }
 
+type TabCategory = 'conversation' | 'editor' | 'webview' | 'skills' | 'home'
+
+function getTabCategory(convId: string): TabCategory {
+  if (!convId) return 'home'
+  if (convId === SKILLS_TAB_ID) return 'skills'
+  if (convId.startsWith(WEBVIEW_PREFIX)) return 'webview'
+  if (convId.startsWith(EDITOR_PREFIX)) return 'editor'
+  return 'conversation'
+}
+
+/** 在有分栏时，优先找当前激活tab为同类型的栏 */
+function findBestPaneForCategory(ctx: TabContext, category: TabCategory): PaneState {
+  const activePane = getActivePane(ctx)
+  // 没有分栏或当前栏的激活tab就是同类型，直接用当前栏
+  const activeTab = activePane.tabs[activePane.activeTabIdx]
+  if (countPanes(ctx.root) <= 1 || getTabCategory(activeTab?.convId ?? '') === category) {
+    return activePane
+  }
+  // 遍历所有栏，找激活tab类型匹配的
+  let matched: PaneState | null = null
+  forEachPane(ctx.root, (pane) => {
+    if (matched) return
+    const tab = pane.tabs[pane.activeTabIdx]
+    if (tab && getTabCategory(tab.convId) === category) {
+      matched = pane
+    }
+  })
+  return matched ?? activePane
+}
+
 function forEachPane(node: PaneNode, visit: (pane: PaneState) => void) {
   if (node.type === 'pane') {
     visit(node.pane)
@@ -335,7 +365,7 @@ function openConversationTab(convId: string, options?: { title?: string; reuseAc
   if (focusExistingTab(convId)) return
 
   const c = getCtx()
-  const pane = getActivePane(c)
+  const pane = findBestPaneForCategory(c, 'conversation')
   const activeTab = pane.tabs[pane.activeTabIdx]
 
   if (options?.reuseActiveEmptyTab && activeTab && !activeTab.convId) {
@@ -427,7 +457,7 @@ function addNewWebviewTab(paneId?: string) {
 function openSkills() {
   if (focusExistingTab(SKILLS_TAB_ID)) return
   const c = getCtx()
-  const pane = getActivePane(c)
+  const pane = findBestPaneForCategory(c, 'skills')
   pane.tabs[pane.activeTabIdx].convId = SKILLS_TAB_ID
   c.activePaneId = pane.id
 }
@@ -436,7 +466,7 @@ function openWebView(filePath: string) {
   const webviewId = WEBVIEW_PREFIX + filePath
   if (focusExistingTab(webviewId)) return
   const c = getCtx()
-  const pane = getActivePane(c)
+  const pane = findBestPaneForCategory(c, 'webview')
   pane.tabs.push(createTab(webviewId))
   pane.activeTabIdx = pane.tabs.length - 1
   c.activePaneId = pane.id
@@ -446,7 +476,7 @@ function onOpenFile(filePath: string) {
   const editorId = EDITOR_PREFIX + filePath
   if (focusExistingTab(editorId)) return
   const c = getCtx()
-  const pane = getActivePane(c)
+  const pane = findBestPaneForCategory(c, 'editor')
   pane.tabs.push(createTab(editorId))
   pane.activeTabIdx = pane.tabs.length - 1
   c.activePaneId = pane.id
@@ -640,6 +670,24 @@ const webviewCurrentUrls = reactive<Record<string, string>>({})
 
 const codeRefStore = reactive(new Map<string, CodeReference>())
 
+const pendingFileReferences = reactive<FileReference[]>([])
+
+function addFileReferences(refs: FileReference[]) {
+  for (const r of refs) {
+    if (!pendingFileReferences.some(f => f.filePath === r.filePath)) {
+      pendingFileReferences.push(r)
+    }
+  }
+}
+
+function removeFileReference(index: number) {
+  pendingFileReferences.splice(index, 1)
+}
+
+function clearFileReferences() {
+  pendingFileReferences.splice(0)
+}
+
 function addCodeReference(ref: CodeReference) {
   const id = crypto.randomUUID()
   codeRefStore.set(id, ref)
@@ -729,6 +777,10 @@ provide('setWebviewCurrentUrl', setWebviewCurrentUrl)
 provide('webviewCurrentUrls', webviewCurrentUrls)
 provide('addCodeReference', addCodeReference)
 provide('codeRefStore', codeRefStore)
+provide('pendingFileReferences', pendingFileReferences)
+provide('addFileReferences', addFileReferences)
+provide('removeFileReference', removeFileReference)
+provide('clearFileReferences', clearFileReferences)
 
 async function openWelcomeConversation(payload: WelcomeSendPayload) {
   const meta = await window.conversationApi.create('新对话', activeProject.value?.id)

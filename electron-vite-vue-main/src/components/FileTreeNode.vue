@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { inject, ref, onMounted, onUnmounted } from 'vue'
+import { inject, ref, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
+import type { FileReference } from '../types/workspace'
 
 defineProps<{
   entries: FileEntry[]
@@ -11,10 +12,52 @@ const dirChildren = inject<Record<string, FileEntry[]>>('fileTree:dirChildren')!
 const toggleDir = inject<(path: string) => void>('fileTree:toggleDir')!
 const openFile = inject<(path: string) => void>('fileTree:openFile')!
 const previewHtmlFile = inject<(path: string) => void>('fileTree:previewHtml')!
+const selectedFiles = inject<Set<string>>('fileTree:selectedFiles')!
+const toggleSelect = inject<(path: string, entry: FileEntry, e: MouseEvent) => void>('fileTree:toggleSelect')!
+const createInDir = inject<(parentDir: string, type: 'file' | 'dir') => void>('fileTree:createInDir')!
+const newItemState = inject<Ref<{ parentDir: string; type: 'file' | 'dir'; name: string } | null>>('fileTree:newItemState')!
+const confirmNewItem = inject<() => void>('fileTree:confirmNewItem')!
+const onNewItemKeydown = inject<(e: KeyboardEvent) => void>('fileTree:onNewItemKeydown')!
+
+function onFileClick(e: MouseEvent, entry: FileEntry) {
+  if (e.metaKey || e.ctrlKey) {
+    toggleSelect(entry.path, entry, e)
+  } else {
+    if (entry.isDirectory) toggleDir(entry.path)
+    else openFile(entry.path)
+  }
+}
+
+function onDragStart(e: DragEvent, entry: FileEntry) {
+  if (!e.dataTransfer) return
+  let refs: FileReference[]
+  if (selectedFiles.has(entry.path)) {
+    refs = Array.from(selectedFiles).map(p => {
+      const name = p.replace(/\\/g, '/').split('/').pop() || p
+      return { filePath: p, name, isDirectory: false }
+    })
+  } else {
+    refs = [{ filePath: entry.path, name: entry.name, isDirectory: entry.isDirectory }]
+  }
+  e.dataTransfer.setData('application/x-file-refs', JSON.stringify(refs))
+  e.dataTransfer.effectAllowed = 'copy'
+}
 
 const ctxMenu = ref<{ visible: boolean; x: number; y: number; path: string; name: string; isDirectory: boolean }>({
   visible: false, x: 0, y: 0, path: '', name: '', isDirectory: false,
 })
+
+function ctxNewFile() {
+  const dir = ctxMenu.value.isDirectory ? ctxMenu.value.path : ctxMenu.value.path.replace(/\/[^/]+$/, '')
+  closeCtxMenu()
+  createInDir(dir, 'file')
+}
+
+function ctxNewFolder() {
+  const dir = ctxMenu.value.isDirectory ? ctxMenu.value.path : ctxMenu.value.path.replace(/\/[^/]+$/, '')
+  closeCtxMenu()
+  createInDir(dir, 'dir')
+}
 
 function onFileContext(e: MouseEvent, entry: FileEntry) {
   e.preventDefault()
@@ -69,10 +112,12 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
   <template v-for="entry in entries" :key="entry.path">
     <div
       class="file-item"
-      :class="{ 'is-dir': entry.isDirectory }"
+      :class="{ 'is-dir': entry.isDirectory, 'selected': selectedFiles.has(entry.path) }"
       :style="{ paddingLeft: 8 + (depth || 0) * 14 + 'px' }"
-      @click="entry.isDirectory ? toggleDir(entry.path) : openFile(entry.path)"
+      draggable="true"
+      @click="onFileClick($event, entry)"
       @contextmenu="onFileContext($event, entry)"
+      @dragstart="onDragStart($event, entry)"
     >
       <template v-if="entry.isDirectory">
         <svg
@@ -96,11 +141,30 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
       <span class="file-name">{{ entry.name }}</span>
     </div>
 
-    <FileTreeNode
-      v-if="entry.isDirectory && expandedDirs.has(entry.path) && dirChildren[entry.path]"
-      :entries="dirChildren[entry.path]"
-      :depth="(depth || 0) + 1"
-    />
+    <template v-if="entry.isDirectory && expandedDirs.has(entry.path)">
+      <div v-if="newItemState && newItemState.parentDir === entry.path" class="new-item-row" :style="{ paddingLeft: 8 + ((depth || 0) + 1) * 14 + 'px' }">
+        <svg v-if="newItemState.type === 'dir'" class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        <svg v-else class="file-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+        </svg>
+        <input
+          v-model="newItemState.name"
+          class="new-item-input"
+          :placeholder="newItemState.type === 'file' ? '文件名' : '文件夹名'"
+          :ref="(el: any) => { if (el) nextTick(() => el.focus()) }"
+          @keydown="onNewItemKeydown"
+          @blur="confirmNewItem"
+        />
+      </div>
+      <FileTreeNode
+        v-if="dirChildren[entry.path]"
+        :entries="dirChildren[entry.path]"
+        :depth="(depth || 0) + 1"
+      />
+    </template>
   </template>
 
   <Teleport to="body">
@@ -110,6 +174,9 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
       :style="{ left: ctxMenu.x + 'px', top: ctxMenu.y + 'px' }"
       @mousedown.stop
     >
+      <button @click="ctxNewFile">新建文件</button>
+      <button @click="ctxNewFolder">新建文件夹</button>
+      <div class="ctx-divider"></div>
       <button @click="showInFolder">在文件管理器中显示</button>
       <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">在浏览器中打开</button>
       <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
@@ -135,6 +202,19 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 
 .file-item:hover {
   background: var(--c-base);
+}
+
+.file-item.selected {
+  background: color-mix(in srgb, var(--c-blue) 15%, var(--c-base));
+  color: var(--c-blue);
+}
+
+.file-item.selected .file-icon {
+  color: var(--c-blue);
+}
+
+.file-item.selected .dir-icon {
+  color: var(--c-blue);
 }
 
 .tree-arrow {
@@ -199,5 +279,32 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 
 .file-ctx-menu button.danger {
   color: var(--c-red, #d20f39);
+}
+
+.ctx-divider {
+  height: 1px;
+  background: var(--c-surface1);
+  margin: 3px 6px;
+}
+
+.new-item-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 2px 8px;
+  margin: 0 4px;
+}
+
+.new-item-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--c-text);
+  background: var(--c-base);
+  border: 1px solid var(--c-blue, #1e66f5);
+  border-radius: 4px;
+  outline: none;
+  padding: 2px 6px;
 }
 </style>

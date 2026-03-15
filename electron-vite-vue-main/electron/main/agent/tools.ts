@@ -19,6 +19,9 @@ export interface ToolExecOptions {
   signal?: AbortSignal
   onOutput?: (chunk: string) => void
   toolCallId?: string
+  applyModel?: string
+  applyApiKey?: string
+  applyBaseURL?: string
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -153,6 +156,62 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
 ]
+
+const ABBREVIATION_RE = /(?:\/\/|\/\*|#|<!--|;;\s*)\s*\.{3}\s*\S/
+
+function hasAbbreviations(content: string): boolean {
+  return ABBREVIATION_RE.test(content)
+}
+
+async function callApplyModel(
+  originalContent: string,
+  skeletonContent: string,
+  model: string,
+  apiKey: string,
+  baseURL: string,
+): Promise<string> {
+  const prompt = `你是一个代码合并助手。你的唯一任务是将"缩略新内容"与"原始文件"合并，输出完整的最终文件。
+
+规则：
+1. 缩略新内容中类似 "// ... existing code ..." 或 "// ... 其余代码保持不变 ..." 的省略标记表示"保留原始文件中对应位置的代码"。
+2. 非省略部分是明确要保留或替换的新代码。
+3. 严格根据上下文对齐，将省略标记替换为原始文件中对应的实际代码。
+4. 只输出最终文件内容，不要添加任何解释、包裹或 markdown 代码块标记。
+
+<original_file>
+${originalContent}
+</original_file>
+
+<skeleton>
+${skeletonContent}
+</skeleton>
+
+请输出合并后的完整文件内容：`
+
+  const res = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      max_tokens: 16384,
+    }),
+  })
+
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(`Apply model 请求失败 (${res.status}): ${errText}`)
+  }
+
+  const json = await res.json() as { choices?: { message?: { content?: string } }[] }
+  const result = json.choices?.[0]?.message?.content
+  if (!result) throw new Error('Apply model 返回内容为空')
+  return result
+}
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 const MAX_OUTPUT_SIZE = MAX_FILE_SIZE * 2
@@ -319,11 +378,40 @@ async function readFile(filePath: string, cwd: string): Promise<string> {
   return await fs.readFile(resolved, 'utf-8')
 }
 
-async function writeFile(filePath: string, content: string, cwd: string): Promise<string> {
+async function writeFile(
+  filePath: string,
+  content: string,
+  cwd: string,
+  applyOpts?: { model: string; apiKey: string; baseURL: string },
+): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
   await fs.mkdir(path.dirname(resolved), { recursive: true })
-  await fs.writeFile(resolved, content, 'utf-8')
-  return `已写入 ${resolved}`
+
+  let finalContent = content
+  let applied = false
+
+  if (applyOpts) {
+    let originalContent: string | null = null
+    try {
+      originalContent = await fs.readFile(resolved, 'utf-8')
+    } catch { /* file doesn't exist yet */ }
+
+    if (originalContent !== null && hasAbbreviations(content)) {
+      finalContent = await callApplyModel(
+        originalContent,
+        content,
+        applyOpts.model,
+        applyOpts.apiKey,
+        applyOpts.baseURL,
+      )
+      applied = true
+    }
+  }
+
+  await fs.writeFile(resolved, finalContent, 'utf-8')
+  return applied
+    ? `已写入 ${resolved}（通过 apply model 合并）`
+    : `已写入 ${resolved}`
 }
 
 async function appendFile(filePath: string, content: string, cwd: string): Promise<string> {
@@ -478,8 +566,12 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
         }))
       case 'read_file':
         return text(await readFile(args.path as string, cwd))
-      case 'write_file':
-        return text(await writeFile(args.path as string, args.content as string, cwd))
+      case 'write_file': {
+        const applyOpts = options?.applyModel && options?.applyApiKey && options?.applyBaseURL
+          ? { model: options.applyModel, apiKey: options.applyApiKey, baseURL: options.applyBaseURL }
+          : undefined
+        return text(await writeFile(args.path as string, args.content as string, cwd, applyOpts))
+      }
       case 'append_file':
         return text(await appendFile(args.path as string, args.content as string, cwd))
       case 'list_directory':

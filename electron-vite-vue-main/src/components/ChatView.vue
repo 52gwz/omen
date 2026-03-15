@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, injec
 import { marked } from 'marked'
 import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
-import type { CodeReference } from '../types/workspace'
+import type { CodeReference, FileReference } from '../types/workspace'
 
 marked.setOptions({
   breaks: true,
@@ -78,6 +78,7 @@ const debugCopied = ref(false)
 
 const messagesContainer = ref<HTMLElement>()
 const composerRef = ref<InstanceType<typeof ChatComposer>>()
+const editComposerRef = ref<InstanceType<typeof ChatComposer>>()
 const reasoningContentRefs = new Map<number, HTMLElement>()
 
 const pendingImages = reactive<string[]>([])
@@ -99,7 +100,7 @@ let currentRequestId = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadMessagesPromise: Promise<void> | null = null
 
-const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0 || pendingCodeReferences.length > 0) && !isStreaming.value && !!currentModel.value)
+const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0 || pendingCodeReferences.length > 0 || pendingFileReferences.length > 0) && !isStreaming.value && !!currentModel.value)
 
 const openTabById = inject<(tabId: string) => void>('openTabById', () => {})
 
@@ -116,6 +117,9 @@ const activeTabConvIds = inject<Ref<Set<string>>>('activeTabConvIds', ref(new Se
 const webviewCurrentUrls = inject<Record<string, string>>('webviewCurrentUrls', {})
 const pendingCodeReferences = inject<CodeReference[]>('pendingCodeReferences', [])
 const clearCodeReferences = inject<() => void>('clearCodeReferences', () => {})
+const pendingFileReferences = inject<FileReference[]>('pendingFileReferences', [])
+const addFileReferences = inject<(refs: FileReference[]) => void>('addFileReferences', () => {})
+const clearFileReferences = inject<() => void>('clearFileReferences', () => {})
 
 function toRelativePath(cwd: string, filePath: string): string {
   const base = cwd.endsWith('/') ? cwd : cwd + '/'
@@ -191,6 +195,10 @@ function formatCodeReferences(refs: CodeReference[]): string {
     const lineRange = r.startLine === r.endLine ? `L${r.startLine}` : `L${r.startLine}-L${r.endLine}`
     return `[引用: ${name} (${lineRange})]\n\`\`\`${r.language}\n${r.text}\n\`\`\``
   }).join('\n\n')
+}
+
+function formatFileReferences(refs: FileReference[]): string {
+  return refs.map((r) => `[文件: ${r.filePath}]`).join('\n')
 }
 
 const agentCwd = ref('~')
@@ -278,6 +286,16 @@ function handlePaste(e: ClipboardEvent) {
 
 function handleDrop(e: DragEvent) {
   e.preventDefault()
+  // Handle file references from sidebar
+  const fileRefsData = e.dataTransfer?.getData('application/x-file-refs')
+  if (fileRefsData) {
+    try {
+      const refs: FileReference[] = JSON.parse(fileRefsData)
+      if (refs.length) addFileReferences(refs)
+    } catch {}
+    return
+  }
+  // Handle image files
   const files = e.dataTransfer?.files
   if (!files) return
   for (let i = 0; i < files.length; i++) {
@@ -625,13 +643,16 @@ function sendAgentMessage(text: string) {
 async function sendMessage() {
   const text = inputText.value.trim()
   const refs = [...pendingCodeReferences]
-  if ((!text && pendingImages.length === 0 && !refs.length) || isStreaming.value) return
+  const fileRefs = [...pendingFileReferences]
+  if ((!text && pendingImages.length === 0 && !refs.length && !fileRefs.length) || isStreaming.value) return
 
   errorMsg.value = ''
 
   const images = pendingImages.length > 0 ? [...pendingImages] : undefined
   const refsText = refs.length ? formatCodeReferences(refs) : ''
-  const fullText = refsText ? (text ? `${refsText}\n\n${text}` : refsText) : text
+  const fileRefsText = fileRefs.length ? formatFileReferences(fileRefs) : ''
+  const contextParts = [refsText, fileRefsText].filter(Boolean).join('\n\n')
+  const fullText = contextParts ? (text ? `${contextParts}\n\n${text}` : contextParts) : text
 
   const isFirstMessage = messages.length === 0
   const msg: ChatMessage = { role: 'user', content: fullText }
@@ -643,7 +664,9 @@ async function sendMessage() {
       ? (text.length > 30 ? text.slice(0, 30) + '...' : text)
       : refs.length
         ? `引用: ${refs[0].filePath.split('/').pop()}`
-        : `图片消息 (${images?.length || 0}张)`
+        : fileRefs.length
+          ? `文件: ${fileRefs[0].name}`
+          : `图片消息 (${images?.length || 0}张)`
     window.conversationApi.rename(props.conversationId, title)
     emit('titleChange', title)
   }
@@ -651,6 +674,7 @@ async function sendMessage() {
   inputText.value = ''
   pendingImages.splice(0)
   clearCodeReferences()
+  clearFileReferences()
   scrollToBottom(true)
   scheduleSave()
 
@@ -702,18 +726,8 @@ function editMessage(index: number) {
   editingIndex.value = index
   editingContent.value = msg.content
   nextTick(() => {
-    const ta = document.querySelector('.edit-textarea') as HTMLTextAreaElement
-    if (ta) {
-      ta.focus()
-      ta.setSelectionRange(ta.value.length, ta.value.length)
-      autoResizeTextarea(ta)
-    }
+    editComposerRef.value?.focusInput()
   })
-}
-
-function autoResizeTextarea(el: HTMLTextAreaElement) {
-  el.style.height = 'auto'
-  el.style.height = el.scrollHeight + 'px'
 }
 
 function confirmEdit() {
@@ -917,13 +931,20 @@ defineExpose({ loadConfig, sendWithContent })
 
           <!-- Inline editing -->
           <div v-if="editingIndex === i" class="edit-inline">
-            <textarea
-              class="edit-textarea"
+            <ChatComposer
+              ref="editComposerRef"
               v-model="editingContent"
-              @keydown.enter.exact.prevent="confirmEdit"
-              @keydown.escape="cancelEdit"
-              @input="autoResizeTextarea($event.target as HTMLTextAreaElement)"
-            ></textarea>
+              variant="edit"
+              :pending-images="[]"
+              :providers="[]"
+              active-provider-id=""
+              current-model=""
+              chat-mode="chat"
+              :can-send="false"
+              placeholder=""
+              @confirm="confirmEdit"
+              @cancel="cancelEdit"
+            />
             <div class="edit-actions">
               <button class="edit-cancel-btn" @click="cancelEdit">取消</button>
               <button class="edit-confirm-btn" @click="confirmEdit">确认</button>
@@ -1970,25 +1991,6 @@ defineExpose({ loadConfig, sendWithContent })
 /* Inline editing */
 .edit-inline {
   width: 100%;
-}
-
-.edit-textarea {
-  width: 100%;
-  min-height: 1.6em;
-  max-height: 40vh;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: inherit;
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  resize: none;
-  overflow-y: auto;
-  outline: none;
-  box-sizing: border-box;
 }
 
 .edit-actions {

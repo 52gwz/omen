@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, computed, watch, inject } from 'vue'
 import ChatComposer from './ChatComposer.vue'
+import type { FileReference } from '../types/workspace'
 
 const props = defineProps<{
   projectName?: string
@@ -11,12 +12,14 @@ const currentModel = ref('')
 const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
 const pendingImages = reactive<string[]>([])
+const addFileReferences = inject<(refs: FileReference[]) => void>('addFileReferences', () => {})
+const pendingFileReferences = inject<FileReference[]>('pendingFileReferences', [])
 
 type ChatMode = 'chat' | 'agent'
 const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
 
 const canSend = computed(() =>
-  (Boolean(inputText.value.trim()) || pendingImages.length > 0) && !!currentModel.value
+  (Boolean(inputText.value.trim()) || pendingImages.length > 0 || pendingFileReferences.length > 0) && !!currentModel.value
 )
 
 const emit = defineEmits<{
@@ -81,6 +84,16 @@ function handlePaste(e: ClipboardEvent) {
 
 function handleDrop(e: DragEvent) {
   e.preventDefault()
+  // Handle file references from sidebar
+  const fileRefsData = e.dataTransfer?.getData('application/x-file-refs')
+  if (fileRefsData) {
+    try {
+      const refs: FileReference[] = JSON.parse(fileRefsData)
+      if (refs.length) addFileReferences(refs)
+    } catch {}
+    return
+  }
+  // Handle image files
   const files = e.dataTransfer?.files
   if (!files) return
   for (let i = 0; i < files.length; i++) {

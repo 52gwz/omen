@@ -44,6 +44,9 @@ interface AgentRunParams {
   signal?: AbortSignal
   disabledSkills?: string[]
   tabContext?: string
+  applyModel?: string
+  applyApiKey?: string
+  applyBaseURL?: string
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -66,7 +69,7 @@ function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCal
   }
 }
 
-const STREAM_READ_TIMEOUT_MS = 90_000
+const STREAM_READ_TIMEOUT_MS = 360_000
 
 function readWithTimeout(
   reader: { read(): Promise<{ value: Uint8Array | undefined; done: boolean }> },
@@ -145,6 +148,9 @@ async function streamOnce(params: {
   const toolCallAccum = new Map<number, ToolCall>()
   const toolCallIndexMap = new Map<number, number>()
 
+  const debugLogPath = path.join(process.env.HOME || '/tmp', '.dot-sse-debug.log')
+  try { fs.writeFileSync(debugLogPath, `--- NEW REQUEST ${new Date().toISOString()} ---\n`, 'utf-8') } catch { /* ignore */ }
+
   function emitContent(text: string) {
     if (!text) return
     fullContent += text
@@ -166,6 +172,7 @@ async function streamOnce(params: {
       const trimmed = line.trim()
       if (!trimmed || !trimmed.startsWith('data:')) continue
       const data = trimmed.slice(5).trim()
+      try { fs.appendFileSync(debugLogPath, data + '\n', 'utf-8') } catch { /* ignore */ }
       if (data === '[DONE]') { streamDone = true; break }
 
       try {
@@ -214,6 +221,8 @@ async function streamOnce(params: {
   } finally {
     try { reader.cancel() } catch { /* already closed */ }
   }
+
+  try { fs.appendFileSync(debugLogPath, `--- STREAM END finishReason=${finishReason} toolCalls=${toolCallAccum.size} ---\n`, 'utf-8') } catch { /* ignore */ }
 
   const toolCalls = Array.from(toolCallAccum.values())
   return { content: fullContent.trim(), reasoning: fullReasoning.trim(), toolCalls, finishReason }
@@ -282,7 +291,7 @@ function waitForConfirmation(requestId: string, toolCallId: string, signal?: Abo
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext, applyModel, applyApiKey, applyBaseURL } = params
 
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter(s => s.enabled)
@@ -414,6 +423,9 @@ export async function runAgentLoop(params: AgentRunParams) {
         onOutput: (chunk) => {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },
+        applyModel,
+        applyApiKey,
+        applyBaseURL,
       }
       const toolResult = await executeTool(tc.function.name, args, cwd, execOptions)
 

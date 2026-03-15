@@ -58,3 +58,9 @@ export interface CodeReference {
   endLine: number
   language: string
 }
+
+export interface FileReference {
+  filePath: string
+  name: string
+  isDirectory: boolean
+}

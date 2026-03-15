@@ -152,6 +152,8 @@ interface FsApi {
   onDirChanged(callback: (data: { dirPath: string }) => void): () => void
   readFile(filePath: string): Promise<{ content: string; error?: string }>
   writeFile(filePath: string, content: string): Promise<{ error?: string }>
+  createFile(filePath: string): Promise<{ error?: string }>
+  createDir(dirPath: string): Promise<{ error?: string }>
 }
 
 interface WorkspaceApi {

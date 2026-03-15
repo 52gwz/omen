@@ -2,10 +2,10 @@
 import Tribute from 'tributejs'
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Ref } from 'vue'
-import type { CodeReference, MentionTab } from '../types/workspace'
+import type { CodeReference, FileReference, MentionTab } from '../types/workspace'
 
 type ChatMode = 'chat' | 'agent'
-type ComposerVariant = 'welcome' | 'chat'
+type ComposerVariant = 'welcome' | 'chat' | 'edit'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -34,11 +34,16 @@ const emit = defineEmits<{
   removeImage: [index: number]
   selectMode: [mode: ChatMode]
   selectProviderModel: [payload: { providerId: string; model: string }]
+  confirm: []
+  cancel: []
 }>()
 
 const openTabs = inject<Ref<MentionTab[]>>('openTabs', ref([]))
 const pendingCodeReferences = inject<CodeReference[]>('pendingCodeReferences', [])
 const removeCodeReference = inject<(index: number) => void>('removeCodeReference', () => {})
+const pendingFileReferences = inject<FileReference[]>('pendingFileReferences', [])
+const removeFileReference = inject<(index: number) => void>('removeFileReference', () => {})
+const addFileReferences = inject<(refs: FileReference[]) => void>('addFileReferences', () => {})
 
 const editorEl = ref<HTMLDivElement>()
 const editorHasContent = ref(false)
@@ -104,6 +109,26 @@ function handleInput() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (props.variant === 'edit') {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      emit('cancel')
+      return
+    }
+    if (event.key === 'Enter') {
+      if (tribute?.isActive) return
+      if (event.shiftKey || event.isComposing) {
+        event.preventDefault()
+        document.execCommand('insertLineBreak')
+        handleInput()
+        return
+      }
+      event.preventDefault()
+      emit('confirm')
+      return
+    }
+    return
+  }
   if (event.key === 'Enter') {
     if (tribute?.isActive) return
     if (event.shiftKey || event.isComposing) {
@@ -141,6 +166,25 @@ function handlePaste(e: ClipboardEvent) {
   if (text) {
     document.execCommand('insertText', false, text)
     handleInput()
+  }
+}
+
+function handleComposerDrop(e: DragEvent) {
+  const fileRefsData = e.dataTransfer?.getData('application/x-file-refs')
+  if (fileRefsData) {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      const refs: FileReference[] = JSON.parse(fileRefsData)
+      if (refs.length) addFileReferences(refs)
+    } catch {}
+  }
+}
+
+function handleComposerDragOver(e: DragEvent) {
+  if (e.dataTransfer?.types.includes('application/x-file-refs')) {
+    e.preventDefault()
+    e.stopPropagation()
   }
 }
 
@@ -239,8 +283,8 @@ defineExpose({
 
 <template>
   <div class="composer-shell" :class="`variant-${variant}`" :style="shellStyle">
-    <div class="input-card">
-      <div v-if="pendingImages.length" class="composer-pending-images">
+    <div class="input-card" @drop="handleComposerDrop" @dragover="handleComposerDragOver">
+      <div v-if="variant !== 'edit' && pendingImages.length" class="composer-pending-images">
         <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-img-item">
           <img :src="img" class="pending-img-thumb" />
           <button class="pending-img-remove" title="移除" @click="emit('removeImage', idx)">
@@ -252,7 +296,7 @@ defineExpose({
         </div>
       </div>
 
-      <div v-if="pendingCodeReferences.length" class="composer-references">
+      <div v-if="variant !== 'edit' && pendingCodeReferences.length" class="composer-references">
         <div v-for="(cref, idx) in pendingCodeReferences" :key="idx" class="reference-item">
           <div class="reference-header">
             <svg class="reference-file-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -271,6 +315,24 @@ defineExpose({
         </div>
       </div>
 
+      <div v-if="variant !== 'edit' && pendingFileReferences.length" class="composer-file-refs">
+        <div v-for="(fref, idx) in pendingFileReferences" :key="fref.filePath" class="file-ref-chip">
+          <svg v-if="fref.isDirectory" class="file-ref-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <svg v-else class="file-ref-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <span class="file-ref-name" :title="fref.filePath">{{ fref.name }}</span>
+          <button class="file-ref-remove" title="移除" @click="removeFileReference(idx)">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <div class="composer-editor-wrap" :class="`variant-${variant}`">
         <div
           ref="editorEl"
@@ -286,7 +348,7 @@ defineExpose({
         <span v-if="!editorHasContent" class="composer-placeholder">{{ placeholder }}</span>
       </div>
 
-      <div class="card-toolbar">
+      <div v-if="variant !== 'edit'" class="card-toolbar">
         <div class="toolbar-left">
           <div ref="modeDropdownRef" class="mode-dropdown">
             <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
@@ -922,6 +984,85 @@ defineExpose({
 .reference-code::-webkit-scrollbar-thumb {
   background: var(--c-surface1);
   border-radius: 2px;
+}
+
+.composer-file-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 16px 0;
+}
+
+.file-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--c-surface0);
+  border: 1px solid var(--c-surface1);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--c-text);
+  max-width: 220px;
+}
+
+.file-ref-icon {
+  flex-shrink: 0;
+  color: var(--c-blue);
+}
+
+.file-ref-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.file-ref-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.file-ref-remove:hover {
+  background: var(--c-surface1);
+  color: var(--c-red, #e64553);
+}
+
+.composer-shell.variant-edit .input-card {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.composer-editor-wrap.variant-edit {
+  min-height: 1.6em;
+}
+
+.composer-editor.variant-edit {
+  min-height: 1.6em;
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.composer-editor-wrap.variant-edit .composer-placeholder {
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
 }
 
 .dropdown-enter-active,

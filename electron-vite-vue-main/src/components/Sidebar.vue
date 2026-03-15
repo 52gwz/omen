@@ -108,11 +108,82 @@ function onEditProjectNameKeydown(e: KeyboardEvent) {
   }
 }
 
+const selectedFiles = reactive(new Set<string>())
+
+function toggleFileSelect(path: string, entry: FileEntry, e: MouseEvent) {
+  if (selectedFiles.has(path)) {
+    selectedFiles.delete(path)
+  } else {
+    selectedFiles.add(path)
+  }
+}
+
+function clearFileSelection() {
+  selectedFiles.clear()
+}
+
+// ---- Inline file/folder creation ----
+const newItemState = ref<{ parentDir: string; type: 'file' | 'dir'; name: string } | null>(null)
+const newItemInput = ref<HTMLInputElement>()
+
+function startCreateInDir(parentDir: string, type: 'file' | 'dir') {
+  // Ensure parent dir is expanded
+  if (!expandedDirs.has(parentDir) && parentDir !== props.projectPath) {
+    toggleDir(parentDir)
+  }
+  newItemState.value = { parentDir, type, name: '' }
+  nextTick(() => newItemInput.value?.focus())
+}
+
+function startCreateAtRoot(type: 'file' | 'dir') {
+  if (!props.projectPath) return
+  startCreateInDir(props.projectPath, type)
+}
+
+async function confirmNewItem() {
+  const state = newItemState.value
+  if (!state) return
+  const name = state.name.trim()
+  if (!name) { cancelNewItem(); return }
+
+  const fullPath = state.parentDir + '/' + name
+  const result = state.type === 'file'
+    ? await window.fsApi.createFile(fullPath)
+    : await window.fsApi.createDir(fullPath)
+
+  newItemState.value = null
+  if (result.error) {
+    window.alert(result.error)
+  } else if (state.type === 'file') {
+    emit('openFile', fullPath)
+  }
+}
+
+function cancelNewItem() {
+  newItemState.value = null
+}
+
+function onNewItemKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    confirmNewItem()
+  } else if (e.key === 'Escape') {
+    cancelNewItem()
+  }
+}
+
 provide('fileTree:expandedDirs', expandedDirs)
 provide('fileTree:dirChildren', dirChildren)
 provide('fileTree:toggleDir', toggleDir)
 provide('fileTree:openFile', (filePath: string) => emit('openFile', filePath))
 provide('fileTree:previewHtml', (filePath: string) => emit('previewHtml', filePath))
+provide('fileTree:selectedFiles', selectedFiles)
+provide('fileTree:toggleSelect', toggleFileSelect)
+provide('fileTree:createInDir', startCreateInDir)
+provide('fileTree:newItemState', newItemState)
+provide('fileTree:confirmNewItem', confirmNewItem)
+provide('fileTree:cancelNewItem', cancelNewItem)
+provide('fileTree:onNewItemKeydown', onNewItemKeydown)
 
 async function loadConversations() {
   const list = await window.conversationApi.list(props.projectId || null)
@@ -138,6 +209,7 @@ async function loadFileTree() {
   fileTree.length = 0
   fileTree.push(...entries)
   expandedDirs.clear()
+  selectedFiles.clear()
   for (const key in dirChildren) delete dirChildren[key]
   startWatching()
 }
@@ -435,12 +507,45 @@ defineExpose({ loadConversations, setActiveConv })
           </svg>
           <span class="section-label">文件</span>
         </div>
-        <span class="section-count">{{ fileTree.length }}</span>
+        <div class="section-header-actions" @click.stop>
+          <button class="section-action-btn" title="新建文件" @click="startCreateAtRoot('file')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+          </button>
+          <button class="section-action-btn" title="新建文件夹" @click="startCreateAtRoot('dir')">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div v-show="filesExpanded" class="file-tree">
+        <div v-if="newItemState && newItemState.parentDir === projectPath" class="new-item-row">
+          <svg v-if="newItemState.type === 'dir'" class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          <svg v-else class="file-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+          <input
+            ref="newItemInput"
+            v-model="newItemState.name"
+            class="new-item-input"
+            :placeholder="newItemState.type === 'file' ? '文件名' : '文件夹名'"
+            @keydown="onNewItemKeydown"
+            @blur="confirmNewItem"
+          />
+        </div>
         <FileTreeNode v-if="fileTree.length" :entries="fileTree" :depth="0" />
-        <div v-else class="section-empty">
+        <div v-else-if="!newItemState" class="section-empty">
           <span>暂无文件</span>
         </div>
       </div>
@@ -785,6 +890,52 @@ defineExpose({ loadConversations, setActiveConv })
   background: var(--c-surface0);
   padding: 1px 6px;
   border-radius: 10px;
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.section-action-btn {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+
+.section-action-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.new-item-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px 2px 8px;
+  margin: 0 4px;
+}
+
+.new-item-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--c-text);
+  background: var(--c-base);
+  border: 1px solid var(--c-blue, #1e66f5);
+  border-radius: 4px;
+  outline: none;
+  padding: 2px 6px;
 }
 
 .project-list {
