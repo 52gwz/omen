@@ -58,8 +58,6 @@ type StoreSchema = {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
-  applyProviderId: string
-  applyModel: string
   projects: ProjectData[]
   conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
   disabledSkills: string[]
@@ -76,8 +74,6 @@ const store = new Store<StoreSchema>({
     providers: [],
     activeProviderId: '',
     activeModel: '',
-    applyProviderId: '',
-    applyModel: '',
     projects: [],
     conversations: {},
     disabledSkills: [],
@@ -234,8 +230,6 @@ ipcMain.handle('ai:get-config', () => {
     providers: store.get('providers') || [],
     activeProviderId: store.get('activeProviderId') || '',
     activeModel: store.get('activeModel') || '',
-    applyProviderId: store.get('applyProviderId') || '',
-    applyModel: store.get('applyModel') || '',
     maxIterations: store.get('maxIterations') ?? 0,
     autoApproveAll: store.get('autoApproveAll') ?? false,
   }
@@ -245,16 +239,12 @@ ipcMain.handle('ai:save-config', (_, config: {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
-  applyProviderId: string
-  applyModel: string
   maxIterations: number
   autoApproveAll: boolean
 }) => {
   store.set('providers', config.providers)
   store.set('activeProviderId', config.activeProviderId)
   store.set('activeModel', config.activeModel)
-  store.set('applyProviderId', config.applyProviderId)
-  store.set('applyModel', config.applyModel)
   store.set('maxIterations', config.maxIterations)
   store.set('autoApproveAll', config.autoApproveAll)
 })
@@ -449,21 +439,7 @@ ipcMain.on('agent:start', async (event, payload: {
     const autoApproveAll = store.get('autoApproveAll') ?? false
     const disabledSkills = store.get('disabledSkills') || []
 
-    let applyApiKey = apiKey
-    let applyBaseURL = baseURL
-    let applyModelName = model
-    const applyPid = store.get('applyProviderId') || ''
-    const applyMod = store.get('applyModel') || ''
-    if (applyPid && applyMod) {
-      try {
-        const applyConfig = getAiConfig(applyPid)
-        applyApiKey = applyConfig.apiKey
-        applyBaseURL = applyConfig.baseURL
-        applyModelName = applyMod
-      } catch { /* fall back to main model */ }
-    }
-
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills, tabContext: payload.tabContext, applyModel: applyModelName, applyApiKey, applyBaseURL })
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills, tabContext: payload.tabContext })
   } catch (err: any) {
     if (err.name === 'AbortError') {
       sender.send('agent:done', { requestId, stopped: true })
@@ -788,6 +764,32 @@ ipcMain.handle('fs:create-dir', async (_, dirPath: string): Promise<{ error?: st
     return {}
   } catch (e: any) {
     return { error: e.message }
+  }
+})
+
+ipcMain.handle('fs:rename-path', async (_, srcPath: string, newName: string): Promise<{ newPath: string; error?: string }> => {
+  try {
+    const dir = path.dirname(srcPath)
+    const dest = path.join(dir, newName)
+    if (srcPath === dest) return { newPath: dest }
+    if (fs.existsSync(dest)) return { newPath: '', error: `已存在: ${newName}` }
+    fs.renameSync(srcPath, dest)
+    return { newPath: dest }
+  } catch (e: any) {
+    return { newPath: '', error: e.message }
+  }
+})
+
+ipcMain.handle('fs:move-path', async (_, srcPath: string, destDir: string): Promise<{ newPath: string; error?: string }> => {
+  try {
+    const name = path.basename(srcPath)
+    const dest = path.join(destDir, name)
+    if (srcPath === dest) return { newPath: dest }
+    if (fs.existsSync(dest)) return { newPath: '', error: `目标已存在: ${name}` }
+    fs.renameSync(srcPath, dest)
+    return { newPath: dest }
+  } catch (e: any) {
+    return { newPath: '', error: e.message }
   }
 })
 

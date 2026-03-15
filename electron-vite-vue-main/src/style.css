@@ -14,12 +14,12 @@
   color-scheme: light;
 
   /* --- Light theme (default) --- */
-  --c-base: #eff1f5;
-  --c-mantle: #e6e9ef;
-  --c-surface0: #dce0e8;
+  --c-base: #f7f7f7;
+  --c-mantle: #efefef;
+  --c-surface0: #e4e4e4;
   --c-surface1: #bcc0cc;
   --c-surface2: #acb0be;
-  --c-surface-alt: #e6e9ef;
+  --c-surface-alt: #e8e8e8;
   --c-surface-hover: #ccd0da;
 
   --c-text: #4c4f69;

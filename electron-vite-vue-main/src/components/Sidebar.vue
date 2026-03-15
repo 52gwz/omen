@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
+import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick, computed, watchEffect } from 'vue'
 import { useTheme } from '../composables/useTheme'
 import FileTreeNode from './FileTreeNode.vue'
 
@@ -109,6 +109,25 @@ function onEditProjectNameKeydown(e: KeyboardEvent) {
 }
 
 const selectedFiles = reactive(new Set<string>())
+const lastClickedPath = ref<string | null>(null)
+
+// Flat list of all visible file entries for shift-select range
+const allFlatEntries = ref<FileEntry[]>([])
+
+function buildFlatEntries(entries: FileEntry[]): FileEntry[] {
+  const result: FileEntry[] = []
+  for (const e of entries) {
+    result.push(e)
+    if (e.isDirectory && expandedDirs.has(e.path) && dirChildren[e.path]) {
+      result.push(...buildFlatEntries(dirChildren[e.path]))
+    }
+  }
+  return result
+}
+
+watchEffect(() => {
+  allFlatEntries.value = buildFlatEntries(fileTree)
+})
 
 function toggleFileSelect(path: string, entry: FileEntry, e: MouseEvent) {
   if (selectedFiles.has(path)) {
@@ -172,6 +191,53 @@ function onNewItemKeydown(e: KeyboardEvent) {
   }
 }
 
+const fileTreeCtxMenu = ref<{ visible: boolean; x: number; y: number }>({ visible: false, x: 0, y: 0 })
+
+function onFileTreeContext(e: MouseEvent) {
+  e.preventDefault()
+  if (!props.projectPath) return
+  fileTreeCtxMenu.value = { visible: true, x: e.clientX, y: e.clientY }
+}
+
+function closeFileTreeCtxMenu() {
+  fileTreeCtxMenu.value.visible = false
+}
+
+function fileTreeCtxNewFile() {
+  closeFileTreeCtxMenu()
+  startCreateAtRoot('file')
+}
+
+function fileTreeCtxNewFolder() {
+  closeFileTreeCtxMenu()
+  startCreateAtRoot('dir')
+}
+
+function onFileTreeDragOver(e: DragEvent) {
+  if (!e.dataTransfer?.types.includes('application/x-file-move')) return
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+}
+
+async function onFileTreeDrop(e: DragEvent) {
+  e.preventDefault()
+  if (!props.projectPath) return
+  const moveData = e.dataTransfer?.getData('application/x-file-move')
+  if (!moveData) return
+  try {
+    const paths: string[] = JSON.parse(moveData)
+    for (const src of paths) {
+      const parentDir = src.replace(/\/[^/]+$/, '')
+      if (parentDir === props.projectPath) continue
+      const result = await window.fsApi.movePath(src, props.projectPath)
+      if (result.error) {
+        window.alert(`移动失败: ${result.error}`)
+        break
+      }
+    }
+  } catch {}
+}
+
 provide('fileTree:expandedDirs', expandedDirs)
 provide('fileTree:dirChildren', dirChildren)
 provide('fileTree:toggleDir', toggleDir)
@@ -184,6 +250,8 @@ provide('fileTree:newItemState', newItemState)
 provide('fileTree:confirmNewItem', confirmNewItem)
 provide('fileTree:cancelNewItem', cancelNewItem)
 provide('fileTree:onNewItemKeydown', onNewItemKeydown)
+provide('fileTree:lastClickedPath', lastClickedPath)
+provide('fileTree:allEntries', allFlatEntries)
 
 async function loadConversations() {
   const list = await window.conversationApi.list(props.projectId || null)
@@ -330,10 +398,12 @@ onMounted(() => {
   if (!props.projectId) loadProjects()
   else loadFileTree()
   document.addEventListener('mousedown', closeContextMenu)
+  document.addEventListener('mousedown', closeFileTreeCtxMenu)
 })
 
 onUnmounted(() => {
   document.removeEventListener('mousedown', closeContextMenu)
+  document.removeEventListener('mousedown', closeFileTreeCtxMenu)
   stopWatching()
 })
 
@@ -366,9 +436,6 @@ defineExpose({ loadConversations, setActiveConv })
           </svg>
         </button>
         <div class="sidebar-project-title" @click="!editingProjectName && startEditProjectName()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
           <input
             v-if="editingProjectName"
             ref="editProjectNameInput"
@@ -526,7 +593,7 @@ defineExpose({ loadConversations, setActiveConv })
         </div>
       </div>
 
-      <div v-show="filesExpanded" class="file-tree">
+      <div v-show="filesExpanded" class="file-tree" @contextmenu.self="onFileTreeContext" @dragover.self="onFileTreeDragOver" @drop.self="onFileTreeDrop">
         <div v-if="newItemState && newItemState.parentDir === projectPath" class="new-item-row">
           <svg v-if="newItemState.type === 'dir'" class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -604,6 +671,17 @@ defineExpose({ loadConversations, setActiveConv })
         <button @click="handleContextAction('delete')">
           {{ contextMenu.type === 'project' ? '删除项目' : '删除对话' }}
         </button>
+      </div>
+    </Teleport>
+    <Teleport to="body">
+      <div
+        v-if="fileTreeCtxMenu.visible"
+        class="ctx-menu"
+        :style="{ left: fileTreeCtxMenu.x + 'px', top: fileTreeCtxMenu.y + 'px' }"
+        @mousedown.stop
+      >
+        <button @click="fileTreeCtxNewFile">新建文件</button>
+        <button @click="fileTreeCtxNewFolder">新建文件夹</button>
       </div>
     </Teleport>
   </div>
@@ -991,7 +1069,7 @@ defineExpose({ loadConversations, setActiveConv })
 
 .file-tree {
   overflow-y: auto;
-  padding: 2px 0 4px;
+  padding: 2px 0 60px;
 }
 
 /* ---- Conversations Section ---- */

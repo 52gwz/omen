@@ -18,6 +18,7 @@ export interface PaneLeafNode {
 
 export interface PaneSplitNode {
   type: 'split'
+  id: string
   direction: 'row' | 'column'
   ratio: number
   first: PaneNode

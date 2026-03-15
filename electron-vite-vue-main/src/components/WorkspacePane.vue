@@ -52,6 +52,9 @@ const emit = defineEmits<{
   splitResizeStart: []
   splitResizeEnd: []
   splitResize: [splitNode: PaneSplitNode, ratio: number]
+  fileRefDrop: [paneId: string, position: DropPosition, filePaths: string[]]
+  fileRefDragOver: [paneId: string, position: DropPosition]
+  fileRefDragLeave: []
 }>()
 
 const splitPaneEl = ref<HTMLElement | null>(null)
@@ -105,6 +108,46 @@ const disableSelfDropPreview = computed(() => {
   if (!pane.value || !props.draggingTab) return false
   return props.draggingTab.paneId === pane.value.id && pane.value.tabs.length <= 1
 })
+
+const fileRefDropTarget = ref<DropPosition | null>(null)
+
+function isFileRefDrag(e: DragEvent): boolean {
+  return !!e.dataTransfer?.types.includes('application/x-file-refs')
+}
+
+function onFileRefDragOver(event: DragEvent) {
+  if (!isFileRefDrag(event)) return
+  if (!pane.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+  const position = resolveDropPosition(event)
+  fileRefDropTarget.value = position
+  emit('fileRefDragOver', pane.value.id, position)
+}
+
+function onFileRefDragLeave(event: DragEvent) {
+  fileRefDropTarget.value = null
+  emit('fileRefDragLeave')
+}
+
+function onFileRefDrop(event: DragEvent) {
+  if (!isFileRefDrag(event)) return
+  if (!pane.value) return
+  event.preventDefault()
+  event.stopPropagation()
+  const position = resolveDropPosition(event)
+  fileRefDropTarget.value = null
+  const data = event.dataTransfer?.getData('application/x-file-refs')
+  if (!data) return
+  try {
+    const refs: Array<{ filePath: string; isDirectory: boolean }> = JSON.parse(data)
+    const filePaths = refs.filter(r => !r.isDirectory).map(r => r.filePath)
+    if (filePaths.length) {
+      emit('fileRefDrop', pane.value.id, position, filePaths)
+    }
+  } catch {}
+}
 
 function onTabDragStart(paneId: string, tabId: string, event: DragEvent) {
   if (event.dataTransfer) {
@@ -347,7 +390,16 @@ function scrollActiveTabIntoView() {
   const activeIdx = pane.value.activeTabIdx
   const tabEl = el.querySelectorAll('.tab-item')[activeIdx] as HTMLElement | undefined
   if (!tabEl) return
-  tabEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+  const pad = 20
+  const tabLeft = tabEl.offsetLeft
+  const tabRight = tabLeft + tabEl.offsetWidth
+  const viewLeft = el.scrollLeft
+  const viewRight = viewLeft + el.clientWidth
+  if (tabLeft - pad < viewLeft) {
+    el.scrollTo({ left: Math.max(0, tabLeft - pad), behavior: 'smooth' })
+  } else if (tabRight + pad > viewRight) {
+    el.scrollTo({ left: tabRight + pad - el.clientWidth, behavior: 'smooth' })
+  }
 }
 
 function selectFromList(idx: number) {
@@ -372,6 +424,13 @@ watch(() => pane.value?.tabs.length, () => {
     updateScrollState()
     scrollActiveTabIntoView()
   })
+  // RAF after nextTick: ensure layout is fully settled for newly added tabs
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      updateScrollState()
+      scrollActiveTabIntoView()
+    })
+  })
 })
 
 onMounted(() => {
@@ -392,6 +451,7 @@ onBeforeUnmount(() => {
   <div v-if="node.type === 'split'" ref="splitPaneEl" class="split-pane" :class="node.direction">
     <div class="split-slot" :style="{ flex: String(node.ratio) }">
       <WorkspacePane
+        :key="node.first.type === 'pane' ? node.first.pane.id : node.first.id"
         :node="node.first"
         :active-pane-id="activePaneId"
         :running-conv-ids="runningConvIds"
@@ -422,6 +482,7 @@ onBeforeUnmount(() => {
         @split-resize-start="emit('splitResizeStart')"
         @split-resize-end="emit('splitResizeEnd')"
         @split-resize="(splitNode, ratio) => emit('splitResize', splitNode, ratio)"
+        @file-ref-drop="(paneId, position, filePaths) => emit('fileRefDrop', paneId, position, filePaths)"
       />
     </div>
     <div
@@ -431,6 +492,7 @@ onBeforeUnmount(() => {
     ></div>
     <div class="split-slot" :style="{ flex: String(1 - node.ratio) }">
       <WorkspacePane
+        :key="node.second.type === 'pane' ? node.second.pane.id : node.second.id"
         :node="node.second"
         :active-pane-id="activePaneId"
         :running-conv-ids="runningConvIds"
@@ -461,6 +523,7 @@ onBeforeUnmount(() => {
         @split-resize-start="emit('splitResizeStart')"
         @split-resize-end="emit('splitResizeEnd')"
         @split-resize="(splitNode, ratio) => emit('splitResize', splitNode, ratio)"
+        @file-ref-drop="(paneId, position, filePaths) => emit('fileRefDrop', paneId, position, filePaths)"
       />
     </div>
   </div>
@@ -538,13 +601,13 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
-          <button class="tab-add-btn" title="新建对话" @click.stop="addChatTab">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
         </div>
+        <button class="tab-add-btn" title="新建对话" @click.stop="addChatTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
         <button
           v-if="canScrollRight"
           class="tab-scroll-btn right"
@@ -590,8 +653,9 @@ onBeforeUnmount(() => {
 
     <div
       class="pane-content"
-      @dragover="draggingTab && !disableSelfDropPreview ? onPaneDragOver($event) : undefined"
-      @drop="draggingTab && !disableSelfDropPreview ? onPaneDrop($event) : undefined"
+      @dragover="draggingTab && !disableSelfDropPreview ? onPaneDragOver($event) : onFileRefDragOver($event)"
+      @drop="draggingTab && !disableSelfDropPreview ? onPaneDrop($event) : onFileRefDrop($event)"
+      @dragleave="onFileRefDragLeave"
     >
       <ChatView
         v-for="convId in conversationTabIds"
@@ -640,6 +704,17 @@ onBeforeUnmount(() => {
         <div v-else-if="isDropTarget('top')" class="pane-drop-highlight is-top"></div>
         <div v-else-if="isDropTarget('bottom')" class="pane-drop-highlight is-bottom"></div>
         <div v-else-if="isDropTarget('center')" class="pane-drop-highlight is-center"></div>
+      </div>
+
+      <div
+        v-if="!draggingTab && fileRefDropTarget"
+        class="pane-drop-overlay"
+      >
+        <div v-if="fileRefDropTarget === 'left'" class="pane-drop-highlight is-left"></div>
+        <div v-else-if="fileRefDropTarget === 'right'" class="pane-drop-highlight is-right"></div>
+        <div v-else-if="fileRefDropTarget === 'top'" class="pane-drop-highlight is-top"></div>
+        <div v-else-if="fileRefDropTarget === 'bottom'" class="pane-drop-highlight is-bottom"></div>
+        <div v-else-if="fileRefDropTarget === 'center'" class="pane-drop-highlight is-center"></div>
       </div>
     </div>
   </div>
@@ -826,6 +901,10 @@ onBeforeUnmount(() => {
   background: var(--c-base);
   color: var(--c-text);
   font-weight: 500;
+}
+
+:root:not([data-theme="dark"]) .tab-item.active {
+  background: #ffffff;
 }
 
 .home-tab svg,

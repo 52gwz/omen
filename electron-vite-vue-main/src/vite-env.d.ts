@@ -18,8 +18,6 @@ interface AiChatConfig {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
-  applyProviderId: string
-  applyModel: string
   maxIterations: number
   autoApproveAll: boolean
 }
@@ -154,6 +152,8 @@ interface FsApi {
   writeFile(filePath: string, content: string): Promise<{ error?: string }>
   createFile(filePath: string): Promise<{ error?: string }>
   createDir(dirPath: string): Promise<{ error?: string }>
+  movePath(srcPath: string, destDir: string): Promise<{ newPath: string; error?: string }>
+  renamePath(srcPath: string, newName: string): Promise<{ newPath: string; error?: string }>
 }
 
 interface WorkspaceApi {

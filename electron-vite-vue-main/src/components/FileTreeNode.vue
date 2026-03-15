@@ -2,7 +2,7 @@
 import { inject, ref, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
 import type { FileReference } from '../types/workspace'
 
-defineProps<{
+const props = defineProps<{
   entries: FileEntry[]
   depth?: number
 }>()
@@ -18,11 +18,60 @@ const createInDir = inject<(parentDir: string, type: 'file' | 'dir') => void>('f
 const newItemState = inject<Ref<{ parentDir: string; type: 'file' | 'dir'; name: string } | null>>('fileTree:newItemState')!
 const confirmNewItem = inject<() => void>('fileTree:confirmNewItem')!
 const onNewItemKeydown = inject<(e: KeyboardEvent) => void>('fileTree:onNewItemKeydown')!
+const lastClickedPath = inject<Ref<string | null>>('fileTree:lastClickedPath')!
+const allEntries = inject<Ref<FileEntry[]>>('fileTree:allEntries')!
+
+// ---- Rename state ----
+const renameState = ref<{ path: string; name: string } | null>(null)
+
+function startRename(entry: FileEntry) {
+  renameState.value = { path: entry.path, name: entry.name }
+  nextTick(() => {
+    const input = document.querySelector<HTMLInputElement>('.rename-input')
+    if (input) {
+      input.focus()
+      // select name without extension for files
+      const dotIdx = entry.name.lastIndexOf('.')
+      if (!entry.isDirectory && dotIdx > 0) {
+        input.setSelectionRange(0, dotIdx)
+      } else {
+        input.select()
+      }
+    }
+  })
+}
+
+async function confirmRename() {
+  const state = renameState.value
+  if (!state) return
+  const newName = state.name.trim()
+  renameState.value = null
+  if (!newName || newName === state.path.replace(/.*\//, '')) return
+  const result = await window.fsApi.renamePath(state.path, newName)
+  if (result.error) window.alert(`重命名失败：${result.error}`)
+}
+
+function onRenameKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') { e.preventDefault(); confirmRename() }
+  else if (e.key === 'Escape') { renameState.value = null }
+}
 
 function onFileClick(e: MouseEvent, entry: FileEntry) {
+  if (e.shiftKey && lastClickedPath.value) {
+    // Shift+click: range select from lastClickedPath to this entry
+    const flat = allEntries.value
+    const fromIdx = flat.findIndex(f => f.path === lastClickedPath.value)
+    const toIdx = flat.findIndex(f => f.path === entry.path)
+    if (fromIdx !== -1 && toIdx !== -1) {
+      const [lo, hi] = fromIdx < toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx]
+      for (let i = lo; i <= hi; i++) selectedFiles.add(flat[i].path)
+    }
+    return
+  }
   if (e.metaKey || e.ctrlKey) {
     toggleSelect(entry.path, entry, e)
   } else {
+    lastClickedPath.value = entry.path
     if (entry.isDirectory) toggleDir(entry.path)
     else openFile(entry.path)
   }
@@ -30,6 +79,12 @@ function onFileClick(e: MouseEvent, entry: FileEntry) {
 
 function onDragStart(e: DragEvent, entry: FileEntry) {
   if (!e.dataTransfer) return
+  // Set internal move data
+  const movePaths = selectedFiles.has(entry.path)
+    ? Array.from(selectedFiles)
+    : [entry.path]
+  e.dataTransfer.setData('application/x-file-move', JSON.stringify(movePaths))
+  // Also set chat ref data for dropping into chat
   let refs: FileReference[]
   if (selectedFiles.has(entry.path)) {
     refs = Array.from(selectedFiles).map(p => {
@@ -40,7 +95,48 @@ function onDragStart(e: DragEvent, entry: FileEntry) {
     refs = [{ filePath: entry.path, name: entry.name, isDirectory: entry.isDirectory }]
   }
   e.dataTransfer.setData('application/x-file-refs', JSON.stringify(refs))
-  e.dataTransfer.effectAllowed = 'copy'
+  e.dataTransfer.effectAllowed = 'copyMove'
+}
+
+const dropTargetDir = ref<string | null>(null)
+
+function onDirDragOver(e: DragEvent, entry: FileEntry) {
+  if (!entry.isDirectory) return
+  if (!e.dataTransfer?.types.includes('application/x-file-move')) return
+  e.preventDefault()
+  e.stopPropagation()
+  e.dataTransfer.dropEffect = 'move'
+  dropTargetDir.value = entry.path
+}
+
+function onDirDragLeave(e: DragEvent, entry: FileEntry) {
+  if (dropTargetDir.value === entry.path) {
+    dropTargetDir.value = null
+  }
+}
+
+async function onDirDrop(e: DragEvent, entry: FileEntry) {
+  e.preventDefault()
+  e.stopPropagation()
+  dropTargetDir.value = null
+  if (!entry.isDirectory) return
+  const moveData = e.dataTransfer?.getData('application/x-file-move')
+  if (!moveData) return
+  try {
+    const paths: string[] = JSON.parse(moveData)
+    for (const src of paths) {
+      // Don't move into itself or its own parent
+      if (src === entry.path) continue
+      if (entry.path.startsWith(src + '/')) continue
+      const parentDir = src.replace(/\/[^/]+$/, '')
+      if (parentDir === entry.path) continue
+      const result = await window.fsApi.movePath(src, entry.path)
+      if (result.error) {
+        window.alert(`移动失败: ${result.error}`)
+        break
+      }
+    }
+  } catch {}
 }
 
 const ctxMenu = ref<{ visible: boolean; x: number; y: number; path: string; name: string; isDirectory: boolean }>({
@@ -57,6 +153,12 @@ function ctxNewFolder() {
   const dir = ctxMenu.value.isDirectory ? ctxMenu.value.path : ctxMenu.value.path.replace(/\/[^/]+$/, '')
   closeCtxMenu()
   createInDir(dir, 'dir')
+}
+
+function ctxRename() {
+  const entry = { path: ctxMenu.value.path, name: ctxMenu.value.name, isDirectory: ctxMenu.value.isDirectory }
+  closeCtxMenu()
+  startRename(entry as FileEntry)
 }
 
 function onFileContext(e: MouseEvent, entry: FileEntry) {
@@ -112,12 +214,15 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
   <template v-for="entry in entries" :key="entry.path">
     <div
       class="file-item"
-      :class="{ 'is-dir': entry.isDirectory, 'selected': selectedFiles.has(entry.path) }"
+      :class="{ 'is-dir': entry.isDirectory, 'selected': selectedFiles.has(entry.path), 'drop-target': dropTargetDir === entry.path }"
       :style="{ paddingLeft: 8 + (depth || 0) * 14 + 'px' }"
       draggable="true"
       @click="onFileClick($event, entry)"
       @contextmenu="onFileContext($event, entry)"
       @dragstart="onDragStart($event, entry)"
+      @dragover="onDirDragOver($event, entry)"
+      @dragleave="onDirDragLeave($event, entry)"
+      @drop="onDirDrop($event, entry)"
     >
       <template v-if="entry.isDirectory">
         <svg
@@ -138,7 +243,15 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
           <polyline points="14 2 14 8 20 8" />
         </svg>
       </template>
-      <span class="file-name">{{ entry.name }}</span>
+      <span v-if="renameState?.path === entry.path" class="rename-input-wrap" @click.stop>
+        <input
+          v-model="renameState.name"
+          class="rename-input"
+          @keydown="onRenameKeydown"
+          @blur="confirmRename"
+        />
+      </span>
+      <span v-else class="file-name">{{ entry.name }}</span>
     </div>
 
     <template v-if="entry.isDirectory && expandedDirs.has(entry.path)">
@@ -177,8 +290,10 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
       <button @click="ctxNewFile">新建文件</button>
       <button @click="ctxNewFolder">新建文件夹</button>
       <div class="ctx-divider"></div>
+      <button @click="ctxRename">重命名</button>
       <button @click="showInFolder">在文件管理器中显示</button>
       <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">在浏览器中打开</button>
+      <div class="ctx-divider"></div>
       <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
     </div>
   </Teleport>
@@ -215,6 +330,13 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 
 .file-item.selected .dir-icon {
   color: var(--c-blue);
+}
+
+.file-item.drop-target {
+  background: color-mix(in srgb, var(--c-blue) 20%, var(--c-base));
+  outline: 1px dashed var(--c-blue);
+  outline-offset: -1px;
+  border-radius: 5px;
 }
 
 .tree-arrow {
@@ -296,6 +418,25 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 }
 
 .new-item-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  font-family: inherit;
+  color: var(--c-text);
+  background: var(--c-base);
+  border: 1px solid var(--c-blue, #1e66f5);
+  border-radius: 4px;
+  outline: none;
+  padding: 2px 6px;
+}
+
+.rename-input-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.rename-input {
   flex: 1;
   min-width: 0;
   font-size: 0.78rem;

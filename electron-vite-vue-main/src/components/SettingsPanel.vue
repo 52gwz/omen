@@ -6,8 +6,6 @@ const emit = defineEmits<{ close: [] }>()
 const providers = reactive<ModelProvider[]>([])
 const activeProviderId = ref('')
 const activeModel = ref('')
-const applyProviderId = ref('')
-const applyModel = ref('')
 const maxIterations = ref(0)
 const autoApproveAll = ref(false)
 const saving = ref(false)
@@ -28,8 +26,6 @@ onMounted(async () => {
     }
     activeProviderId.value = config.activeProviderId
     activeModel.value = config.activeModel
-    applyProviderId.value = config.applyProviderId || ''
-    applyModel.value = config.applyModel || ''
     maxIterations.value = config.maxIterations ?? 0
     autoApproveAll.value = config.autoApproveAll ?? false
     if (providers.length === 1) expandedId.value = providers[0].id
@@ -113,16 +109,6 @@ function removeModel(provider: ModelProvider, model: string) {
   if (idx >= 0) provider.models.splice(idx, 1)
 }
 
-const applyProviderModels = computed(() => {
-  if (!applyProviderId.value) return []
-  const p = providers.find(p => p.id === applyProviderId.value)
-  return p?.models || []
-})
-
-function onApplyProviderChange() {
-  applyModel.value = ''
-}
-
 async function save() {
   saving.value = true
   message.value = ''
@@ -145,8 +131,6 @@ async function save() {
       providers: providers.map(p => ({ ...p, models: [...p.models] })),
       activeProviderId: activeProviderId.value,
       activeModel: activeModel.value,
-      applyProviderId: applyProviderId.value,
-      applyModel: applyModel.value,
       maxIterations: maxIterations.value,
       autoApproveAll: autoApproveAll.value,
     })
@@ -276,26 +260,6 @@ async function save() {
           </label>
         </div>
 
-        <div class="section-divider"></div>
-
-        <div class="section-label">Apply 模型</div>
-        <p class="apply-model-desc">写入已有文件时，使用快速小模型将缩略内容与原文件合并。未设置则使用主模型。</p>
-        <div class="apply-model-row">
-          <label class="apply-select-label">
-            <span>供应商</span>
-            <select v-model="applyProviderId" @change="onApplyProviderChange" class="apply-select">
-              <option value="">不设置</option>
-              <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name || '未命名' }}</option>
-            </select>
-          </label>
-          <label class="apply-select-label">
-            <span>模型</span>
-            <select v-model="applyModel" class="apply-select" :disabled="!applyProviderId">
-              <option value="">{{ applyProviderId ? '请选择模型' : '—' }}</option>
-              <option v-for="m in applyProviderModels" :key="m" :value="m">{{ m }}</option>
-            </select>
-          </label>
-        </div>
       </div>
 
       <div class="settings-footer">
@@ -750,56 +714,4 @@ async function save() {
   transform: translateX(18px);
 }
 
-/* Apply model */
-.apply-model-desc {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--c-overlay0);
-  line-height: 1.4;
-}
-
-.apply-model-row {
-  display: flex;
-  gap: 10px;
-}
-
-.apply-select-label {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.apply-select-label span {
-  font-size: 0.82rem;
-  color: var(--c-subtext0);
-}
-
-.apply-select {
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 8px;
-  padding: 9px 12px;
-  color: var(--c-text);
-  font-size: 0.85rem;
-  outline: none;
-  font-family: inherit;
-  transition: border-color 0.2s;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
-}
-
-.apply-select:focus {
-  border-color: var(--c-blue);
-}
-
-.apply-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
 </style>

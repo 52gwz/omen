@@ -17,7 +17,7 @@ const emit = defineEmits<{
 }>()
 
 const expanded = ref(
-  (props.name === 'write_file' || props.name === 'edit_file')
+  (props.name === 'Write' || props.name === 'StrReplace' || props.name === 'apply_patch')
   && props.status !== 'streaming' && props.status !== 'pending'
 )
 const userToggled = ref(false)
@@ -83,11 +83,13 @@ onUnmounted(() => window.removeEventListener('keydown', onPickerKey))
 
 const toolLabel: Record<string, string> = {
   exec_command: '执行命令',
-  read_file: '读取文件',
-  write_file: '写入文件',
+  Read: '读取文件',
+  Write: '写入文件',
+  StrReplace: '替换内容',
+  Delete: '删除文件',
   list_directory: '列出目录',
   grep_search: '搜索内容',
-  edit_file: '编辑文件',
+  apply_patch: '应用补丁',
 }
 
 const displayName = computed(() => toolLabel[props.name] || props.name)
@@ -96,9 +98,11 @@ const argSummary = computed(() => {
   try {
     const obj = JSON.parse(props.arguments)
     if (props.name === 'exec_command' && obj.command) return obj.command
-    if (props.name === 'read_file' && obj.path) return obj.path
-    if (props.name === 'write_file' && obj.path) return obj.path
-    if (props.name === 'edit_file' && obj.path) return obj.path
+    if (props.name === 'Read' && obj.path) return obj.path
+    if (props.name === 'Write' && obj.path) return obj.path
+    if (props.name === 'StrReplace' && obj.path) return obj.path
+    if (props.name === 'Delete' && obj.path) return obj.path
+    if (props.name === 'apply_patch' && obj.patch) return '补丁'
     if (props.name === 'list_directory') return obj.path || '.'
     if (props.name === 'grep_search' && obj.pattern) return obj.pattern
     const first = Object.values(obj)[0]
@@ -181,7 +185,7 @@ function renderMarkdown(raw: string): string {
 }
 
 const isExecCommand = computed(() => props.name === 'exec_command')
-const isFileGenTool = computed(() => props.name === 'write_file' || props.name === 'edit_file')
+const isFileGenTool = computed(() => props.name === 'Write' || props.name === 'StrReplace' || props.name === 'apply_patch')
 
 function unescapePartialJson(s: string): string {
   let trimmed = s
@@ -200,7 +204,18 @@ function unescapePartialJson(s: string): string {
 
 const fileInfo = computed(() => {
   if (!isFileGenTool.value) return null
-  const contentKey = props.name === 'edit_file' ? 'new_string' : 'content'
+  if (props.name === 'apply_patch') {
+    try {
+      const obj = JSON.parse(props.arguments)
+      return { path: '补丁', content: obj.patch ?? null }
+    } catch {
+      const match = props.arguments.match(/"patch"\s*:\s*"/)
+      if (!match) return { path: '补丁', content: null }
+      const rawContent = props.arguments.slice(match.index! + match[0].length)
+      return { path: '补丁', content: unescapePartialJson(rawContent) }
+    }
+  }
+  const contentKey = props.name === 'StrReplace' ? 'new_string' : 'content'
   try {
     const obj = JSON.parse(props.arguments)
     return { path: obj.path || null, content: obj[contentKey] ?? null }

@@ -5,7 +5,7 @@ import type { Ref } from 'vue'
 import type { CodeReference, FileReference, MentionTab } from '../types/workspace'
 
 type ChatMode = 'chat' | 'agent'
-type ComposerVariant = 'welcome' | 'chat' | 'edit'
+type ComposerVariant = 'welcome' | 'chat'
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -34,8 +34,6 @@ const emit = defineEmits<{
   removeImage: [index: number]
   selectMode: [mode: ChatMode]
   selectProviderModel: [payload: { providerId: string; model: string }]
-  confirm: []
-  cancel: []
 }>()
 
 const openTabs = inject<Ref<MentionTab[]>>('openTabs', ref([]))
@@ -109,26 +107,6 @@ function handleInput() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (props.variant === 'edit') {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      emit('cancel')
-      return
-    }
-    if (event.key === 'Enter') {
-      if (tribute?.isActive) return
-      if (event.shiftKey || event.isComposing) {
-        event.preventDefault()
-        document.execCommand('insertLineBreak')
-        handleInput()
-        return
-      }
-      event.preventDefault()
-      emit('confirm')
-      return
-    }
-    return
-  }
   if (event.key === 'Enter') {
     if (tribute?.isActive) return
     if (event.shiftKey || event.isComposing) {
@@ -227,6 +205,11 @@ watch(() => props.modelValue, (val) => {
 onMounted(() => {
   nextTick(() => {
     if (editorEl.value) {
+      // Populate editor with initial modelValue (e.g. when editing a message)
+      if (props.modelValue) {
+        editorEl.value.textContent = props.modelValue
+        editorHasContent.value = true
+      }
       tribute = new Tribute<MentionTab>({
         trigger: '@',
         values: (_text, cb) => cb(openTabs.value),
@@ -504,6 +487,10 @@ defineExpose({
   box-shadow: 0 2px 12px var(--c-shadow);
   display: flex;
   flex-direction: column;
+}
+
+:root:not([data-theme="dark"]) .input-card {
+  background: #ffffff;
 }
 
 .composer-shell.variant-chat .input-card {
@@ -1037,32 +1024,6 @@ defineExpose({
 .file-ref-remove:hover {
   background: var(--c-surface1);
   color: var(--c-red, #e64553);
-}
-
-.composer-shell.variant-edit .input-card {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.composer-editor-wrap.variant-edit {
-  min-height: 1.6em;
-}
-
-.composer-editor.variant-edit {
-  min-height: 1.6em;
-  max-height: 40vh;
-  overflow-y: auto;
-  padding: 0;
-  font-size: inherit;
-  line-height: inherit;
-}
-
-.composer-editor-wrap.variant-edit .composer-placeholder {
-  padding: 0;
-  font-size: inherit;
-  line-height: inherit;
 }
 
 .dropdown-enter-active,

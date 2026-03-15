@@ -2,6 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, inject } from 'vue'
 import * as monaco from 'monaco-editor'
 import { marked } from 'marked'
+import MindMapView from './MindMapView.vue'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
@@ -33,7 +34,7 @@ const loading = ref(true)
 const error = ref('')
 const modified = ref(false)
 const saving = ref(false)
-const previewMode = ref(false)
+const viewMode = ref<'edit' | 'preview' | 'mindmap'>('edit')
 const rawContent = ref('')
 const showSelectionToolbar = ref(false)
 const toolbarPos = ref({ top: 0, left: 0 })
@@ -86,17 +87,18 @@ const isMarkdown = computed(() => {
 })
 
 const renderedHtml = computed(() => {
-  if (!isMarkdown.value || !previewMode.value) return ''
+  if (!isMarkdown.value || viewMode.value !== 'preview') return ''
   return marked.parse(rawContent.value, { async: false }) as string
 })
 
-function togglePreview() {
-  if (previewMode.value) {
-    previewMode.value = false
+function switchMode(mode: 'edit' | 'preview' | 'mindmap') {
+  if (viewMode.value === mode) return
+  if (viewMode.value === 'edit' && editor.value) {
+    rawContent.value = editor.value.getValue()
+  }
+  viewMode.value = mode
+  if (mode === 'edit') {
     requestAnimationFrame(() => editor.value?.layout())
-  } else {
-    if (editor.value) rawContent.value = editor.value.getValue()
-    previewMode.value = true
   }
 }
 
@@ -162,7 +164,7 @@ async function saveFile() {
 }
 
 watch(() => props.filePath, () => {
-  previewMode.value = false
+  viewMode.value = 'edit'
   loadFile()
 })
 
@@ -248,9 +250,9 @@ onBeforeUnmount(() => {
         <div v-if="isMarkdown" class="md-mode-toggle">
           <button
             class="mode-toggle-btn"
-            :class="{ active: !previewMode }"
+            :class="{ active: viewMode === 'edit' }"
             title="编辑"
-            @click="previewMode && togglePreview()"
+            @click="switchMode('edit')"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
@@ -259,13 +261,27 @@ onBeforeUnmount(() => {
           </button>
           <button
             class="mode-toggle-btn"
-            :class="{ active: previewMode }"
+            :class="{ active: viewMode === 'preview' }"
             title="预览"
-            @click="!previewMode && togglePreview()"
+            @click="switchMode('preview')"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
               <circle cx="12" cy="12" r="3" />
+            </svg>
+          </button>
+          <button
+            class="mode-toggle-btn"
+            :class="{ active: viewMode === 'mindmap' }"
+            title="思维导图"
+            @click="switchMode('mindmap')"
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="2" />
+              <circle cx="4" cy="6" r="1.5" /><circle cx="4" cy="18" r="1.5" />
+              <circle cx="20" cy="6" r="1.5" /><circle cx="20" cy="18" r="1.5" />
+              <path d="M10.5 10.5L5.5 7" /><path d="M10.5 13.5L5.5 17" />
+              <path d="M13.5 10.5L18.5 7" /><path d="M13.5 13.5L18.5 17" />
             </svg>
           </button>
         </div>
@@ -291,8 +307,9 @@ onBeforeUnmount(() => {
     <div v-else-if="error" class="editor-error">
       <span>{{ error }}</span>
     </div>
-    <div v-if="isMarkdown && previewMode" class="md-preview" v-html="renderedHtml"></div>
-    <div v-show="!previewMode" ref="editorContainer" class="editor-container"></div>
+    <div v-if="isMarkdown && viewMode === 'preview'" class="md-preview" v-html="renderedHtml"></div>
+    <MindMapView v-if="isMarkdown && viewMode === 'mindmap'" :content="rawContent" :theme="theme" />
+    <div v-show="viewMode === 'edit'" ref="editorContainer" class="editor-container"></div>
   </div>
 </template>
 

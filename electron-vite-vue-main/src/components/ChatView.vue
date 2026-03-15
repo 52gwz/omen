@@ -286,16 +286,7 @@ function handlePaste(e: ClipboardEvent) {
 
 function handleDrop(e: DragEvent) {
   e.preventDefault()
-  // Handle file references from sidebar
-  const fileRefsData = e.dataTransfer?.getData('application/x-file-refs')
-  if (fileRefsData) {
-    try {
-      const refs: FileReference[] = JSON.parse(fileRefsData)
-      if (refs.length) addFileReferences(refs)
-    } catch {}
-    return
-  }
-  // Handle image files
+  // Image files only — file references are handled by ChatComposer's input-card
   const files = e.dataTransfer?.files
   if (!files) return
   for (let i = 0; i < files.length; i++) {
@@ -757,6 +748,23 @@ function cancelEdit() {
   editingIndex.value = null
 }
 
+// 点击外部区域退出编辑
+function handleClickOutsideEdit(e: MouseEvent) {
+  if (editingIndex.value === null) return
+  const editEl = document.querySelector('.edit-inline')
+  if (editEl && !editEl.contains(e.target as Node)) {
+    cancelEdit()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutsideEdit)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutsideEdit)
+})
+
 function selectMode(mode: ChatMode) {
   chatMode.value = mode
   localStorage.setItem('chatMode', mode)
@@ -886,7 +894,7 @@ defineExpose({ loadConfig, sendWithContent })
           <span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
         </div>
 
-        <div v-else class="message-bubble" :class="{ 'agent-bubble': chatMode === 'agent' && msg.role === 'assistant' }">
+        <div v-else class="message-bubble" :class="{ 'agent-bubble': chatMode === 'agent' && msg.role === 'assistant', 'editing': editingIndex === i }">
           <button
             v-if="debugMode"
             class="debug-msg-badge"
@@ -930,25 +938,22 @@ defineExpose({ loadConfig, sendWithContent })
           </div>
 
           <!-- Inline editing -->
-          <div v-if="editingIndex === i" class="edit-inline">
+          <div v-if="editingIndex === i" class="edit-inline" @click.stop>
             <ChatComposer
               ref="editComposerRef"
               v-model="editingContent"
-              variant="edit"
+              variant="chat"
               :pending-images="[]"
-              :providers="[]"
-              active-provider-id=""
-              current-model=""
-              chat-mode="chat"
-              :can-send="false"
-              placeholder=""
-              @confirm="confirmEdit"
-              @cancel="cancelEdit"
+              :providers="providers"
+              :active-provider-id="activeProviderId"
+              :current-model="currentModel"
+              :chat-mode="chatMode"
+              :can-send="!!editingContent.trim()"
+              placeholder="编辑消息..."
+              @send="confirmEdit"
+              @select-provider-model="({ providerId, model }) => selectProviderModel(providerId, model)"
+              @select-mode="selectMode"
             />
-            <div class="edit-actions">
-              <button class="edit-cancel-btn" @click="cancelEdit">取消</button>
-              <button class="edit-confirm-btn" @click="confirmEdit">确认</button>
-            </div>
           </div>
 
           <!-- Text content -->
@@ -1014,7 +1019,13 @@ defineExpose({ loadConfig, sendWithContent })
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             </button>
-            <button class="msg-action-btn" title="编辑（回滚到此消息）" @click.stop="editMessage(i)">
+            <button v-if="editingIndex === i" class="msg-action-btn" title="取消编辑" @click.stop="cancelEdit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+            <button v-else class="msg-action-btn" title="编辑（回滚到此消息）" @click.stop="editMessage(i)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -1037,7 +1048,6 @@ defineExpose({ loadConfig, sendWithContent })
         ref="composerRef"
         v-model="inputText"
         variant="chat"
-        view-transition-name="chat-composer"
         :pending-images="pendingImages"
         :providers="providers"
         :active-provider-id="activeProviderId"
@@ -1107,6 +1117,10 @@ defineExpose({ loadConfig, sendWithContent })
   height: 100%;
   background: var(--c-base);
   color: var(--c-text);
+}
+
+:root:not([data-theme="dark"]) .chat-container {
+  background: #ffffff;
 }
 
 .chat-topbar {
@@ -1993,41 +2007,10 @@ defineExpose({ loadConfig, sendWithContent })
   width: 100%;
 }
 
-.edit-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.edit-cancel-btn,
-.edit-confirm-btn {
-  padding: 3px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--c-surface1);
-  font-size: 0.78rem;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.edit-cancel-btn {
-  background: var(--c-surface0);
-  color: var(--c-subtext0);
-}
-
-.edit-cancel-btn:hover {
-  background: var(--c-surface-hover, var(--c-surface1));
-}
-
-.edit-confirm-btn {
-  background: var(--c-blue, #1e66f5);
-  color: #fff;
-  border-color: transparent;
-}
-
-.edit-confirm-btn:hover {
-  opacity: 0.85;
+.message-bubble.editing {
+  max-width: 100%;
+  background: transparent;
+  padding: 0;
 }
 
 /* Hover action buttons */
@@ -2046,7 +2029,8 @@ defineExpose({ loadConfig, sendWithContent })
 }
 
 .message-bubble:hover .msg-actions,
-.msg-actions:hover {
+.msg-actions:hover,
+.message-bubble.editing .msg-actions {
   opacity: 1;
   pointer-events: auto;
 }

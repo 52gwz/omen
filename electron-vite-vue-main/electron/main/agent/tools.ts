@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { parsePatch, applyPatch } from './patch'
 
 export interface ToolDefinition {
   type: 'function'
@@ -19,9 +20,6 @@ export interface ToolExecOptions {
   signal?: AbortSignal
   onOutput?: (chunk: string) => void
   toolCallId?: string
-  applyModel?: string
-  applyApiKey?: string
-  applyBaseURL?: string
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -42,12 +40,14 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'read_file',
-      description: '读取指定路径的文件内容。路径相对于工作目录或使用绝对路径。',
+      name: 'Read',
+      description: '读取指定路径的文件内容，返回带行号的内容（格式：行号|内容）。支持通过 offset 和 limit 分段读取大文件。也支持读取图片（jpeg/png/gif/webp）和 PDF 文件。编辑文件前必须先 Read 一次。',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '文件路径' },
+          path: { type: 'string', description: '文件路径（相对于工作目录或绝对路径）' },
+          offset: { type: 'integer', description: '从第几行开始读取（1-based），可选' },
+          limit: { type: 'integer', description: '读取的行数，可选' },
         },
         required: ['path'],
       },
@@ -56,13 +56,13 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'write_file',
-      description: '将内容写入指定路径的文件。如果父目录不存在会自动创建。',
+      name: 'Write',
+      description: '将内容写入指定路径的文件，如果文件已存在会直接覆盖。如果父目录不存在会自动创建。主要用于创建新文件，优先使用 StrReplace 编辑已有文件。',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '文件路径' },
-          content: { type: 'string', description: '要写入的内容' },
+          content: { type: 'string', description: '要写入的完整内容' },
         },
         required: ['path', 'content'],
       },
@@ -71,15 +71,31 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'append_file',
-      description: '向已有文件末尾追加内容。文件不存在时自动创建。适合分段写入大文件：先用 write_file 写入开头部分，再用 append_file 逐步追加后续内容。',
+      name: 'StrReplace',
+      description: '在文件中精确查找 old_string 并替换为 new_string。old_string 必须在文件中唯一匹配，否则替换失败（需提供更多上下文使其唯一）。设置 replace_all 为 true 可替换所有出现的位置（适合重命名变量等）。',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '文件路径' },
-          content: { type: 'string', description: '要追加的内容' },
+          old_string: { type: 'string', description: '要被替换的原始文本（必须在文件中唯一）' },
+          new_string: { type: 'string', description: '替换后的新文本（必须与 old_string 不同）' },
+          replace_all: { type: 'boolean', description: '是否替换所有出现的位置，默认 false' },
         },
-        required: ['path', 'content'],
+        required: ['path', 'old_string', 'new_string'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'Delete',
+      description: '删除指定路径的文件。文件不存在或无权限时静默失败。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '要删除的文件路径' },
+        },
+        required: ['path'],
       },
     },
   },
@@ -116,16 +132,14 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'edit_file',
-      description: '通过精确字符串匹配来局部替换文件内容。old_string 必须与文件中的内容完全一致（包括缩进和空白）。如果 old_string 在文件中不唯一，操作会失败，需要提供更多上下文使其唯一。',
+      name: 'apply_patch',
+      description: '通过补丁格式修改文件。支持更新、新建和删除文件。',
       parameters: {
         type: 'object',
         properties: {
-          path: { type: 'string', description: '要编辑的文件路径' },
-          old_string: { type: 'string', description: '要被替换的原始文本，必须与文件内容完全匹配' },
-          new_string: { type: 'string', description: '替换后的新文本' },
+          patch: { type: 'string', description: '完整的补丁内容' },
         },
-        required: ['path', 'old_string', 'new_string'],
+        required: ['patch'],
       },
     },
   },
@@ -156,62 +170,6 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
 ]
-
-const ABBREVIATION_RE = /(?:\/\/|\/\*|#|<!--|;;\s*)\s*\.{3}\s*\S/
-
-function hasAbbreviations(content: string): boolean {
-  return ABBREVIATION_RE.test(content)
-}
-
-async function callApplyModel(
-  originalContent: string,
-  skeletonContent: string,
-  model: string,
-  apiKey: string,
-  baseURL: string,
-): Promise<string> {
-  const prompt = `你是一个代码合并助手。你的唯一任务是将"缩略新内容"与"原始文件"合并，输出完整的最终文件。
-
-规则：
-1. 缩略新内容中类似 "// ... existing code ..." 或 "// ... 其余代码保持不变 ..." 的省略标记表示"保留原始文件中对应位置的代码"。
-2. 非省略部分是明确要保留或替换的新代码。
-3. 严格根据上下文对齐，将省略标记替换为原始文件中对应的实际代码。
-4. 只输出最终文件内容，不要添加任何解释、包裹或 markdown 代码块标记。
-
-<original_file>
-${originalContent}
-</original_file>
-
-<skeleton>
-${skeletonContent}
-</skeleton>
-
-请输出合并后的完整文件内容：`
-
-  const res = await fetch(`${baseURL}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      max_tokens: 16384,
-    }),
-  })
-
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`Apply model 请求失败 (${res.status}): ${errText}`)
-  }
-
-  const json = await res.json() as { choices?: { message?: { content?: string } }[] }
-  const result = json.choices?.[0]?.message?.content
-  if (!result) throw new Error('Apply model 返回内容为空')
-  return result
-}
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 const MAX_OUTPUT_SIZE = MAX_FILE_SIZE * 2
@@ -369,56 +327,115 @@ async function execCommand(
   })
 }
 
-async function readFile(filePath: string, cwd: string): Promise<string> {
+const IMAGE_EXTENSIONS = new Set(['.jpeg', '.jpg', '.png', '.gif', '.webp'])
+
+async function readTool(
+  filePath: string,
+  offset: number | undefined,
+  limit: number | undefined,
+  cwd: string,
+): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
   const stat = await fs.stat(resolved)
-  if (stat.size > MAX_FILE_SIZE) {
-    return `[error] 文件过大 (${(stat.size / 1024).toFixed(0)}KB)，最大支持 1MB`
+
+  const ext = path.extname(resolved).toLowerCase()
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    if (stat.size > MAX_FILE_SIZE * 5) {
+      return `[error] 图片过大 (${(stat.size / 1024).toFixed(0)}KB)，最大支持 5MB`
+    }
+    const buf = await fs.readFile(resolved)
+    const base64 = buf.toString('base64')
+    const mimeMap: Record<string, string> = {
+      '.jpeg': 'image/jpeg', '.jpg': 'image/jpeg',
+      '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp',
+    }
+    return `[image:${mimeMap[ext]}:base64]\n${base64}`
   }
-  return await fs.readFile(resolved, 'utf-8')
+
+  if (ext === '.pdf') {
+    return `[info] PDF 文件，请使用 exec_command 配合相关工具（如 pdftotext）提取文本内容`
+  }
+
+  if (stat.size > MAX_FILE_SIZE) {
+    return `[error] 文件过大 (${(stat.size / 1024).toFixed(0)}KB)，最大支持 1MB。可使用 offset 和 limit 参数分段读取。`
+  }
+
+  const content = await fs.readFile(resolved, 'utf-8')
+  const allLines = content.split('\n')
+
+  const startIdx = offset ? Math.max(0, offset - 1) : 0
+  const endIdx = limit ? Math.min(allLines.length, startIdx + limit) : allLines.length
+  const selectedLines = allLines.slice(startIdx, endIdx)
+
+  const maxLineNumWidth = String(endIdx).length
+  const numbered = selectedLines.map((line, i) => {
+    const lineNum = String(startIdx + i + 1).padStart(maxLineNumWidth, ' ')
+    return `${lineNum}|${line}`
+  })
+
+  let result = numbered.join('\n')
+  if (startIdx > 0 || endIdx < allLines.length) {
+    result = `[显示第 ${startIdx + 1}-${endIdx} 行，共 ${allLines.length} 行]\n${result}`
+  }
+  return result
 }
 
-async function writeFile(
+async function writeTool(
   filePath: string,
   content: string,
   cwd: string,
-  applyOpts?: { model: string; apiKey: string; baseURL: string },
 ): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
   await fs.mkdir(path.dirname(resolved), { recursive: true })
-
-  let finalContent = content
-  let applied = false
-
-  if (applyOpts) {
-    let originalContent: string | null = null
-    try {
-      originalContent = await fs.readFile(resolved, 'utf-8')
-    } catch { /* file doesn't exist yet */ }
-
-    if (originalContent !== null && hasAbbreviations(content)) {
-      finalContent = await callApplyModel(
-        originalContent,
-        content,
-        applyOpts.model,
-        applyOpts.apiKey,
-        applyOpts.baseURL,
-      )
-      applied = true
-    }
-  }
-
-  await fs.writeFile(resolved, finalContent, 'utf-8')
-  return applied
-    ? `已写入 ${resolved}（通过 apply model 合并）`
-    : `已写入 ${resolved}`
+  await fs.writeFile(resolved, content, 'utf-8')
+  return `已写入 ${resolved}`
 }
 
-async function appendFile(filePath: string, content: string, cwd: string): Promise<string> {
+async function strReplaceTool(
+  filePath: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean | undefined,
+  cwd: string,
+): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
-  await fs.mkdir(path.dirname(resolved), { recursive: true })
-  await fs.appendFile(resolved, content, 'utf-8')
-  return `已追加到 ${resolved}`
+  const content = await fs.readFile(resolved, 'utf-8')
+
+  if (oldString === newString) {
+    return `[error] old_string 和 new_string 相同，无需替换`
+  }
+
+  if (!content.includes(oldString)) {
+    return `[error] 在文件中未找到 old_string。请检查内容是否完全匹配（包括空格和缩进）。`
+  }
+
+  if (replaceAll) {
+    const newContent = content.split(oldString).join(newString)
+    const count = content.split(oldString).length - 1
+    await fs.writeFile(resolved, newContent, 'utf-8')
+    return `已替换 ${count} 处匹配`
+  }
+
+  const firstIdx = content.indexOf(oldString)
+  const lastIdx = content.lastIndexOf(oldString)
+  if (firstIdx !== lastIdx) {
+    const occurrences = content.split(oldString).length - 1
+    return `[error] old_string 在文件中出现了 ${occurrences} 次，不唯一。请提供更多上下文使其唯一匹配，或设置 replace_all 为 true 替换全部。`
+  }
+
+  const newContent = content.slice(0, firstIdx) + newString + content.slice(firstIdx + oldString.length)
+  await fs.writeFile(resolved, newContent, 'utf-8')
+  return `已替换 1 处匹配`
+}
+
+async function deleteTool(filePath: string, cwd: string): Promise<string> {
+  const resolved = resolvePath(filePath, cwd)
+  try {
+    await fs.unlink(resolved)
+    return `已删除 ${resolved}`
+  } catch {
+    return `文件不存在或无法删除: ${resolved}`
+  }
 }
 
 async function listDirectory(dirPath: string | undefined, cwd: string): Promise<string> {
@@ -519,38 +536,6 @@ async function grepSearch(
   return output
 }
 
-async function editFile(
-  filePath: string,
-  oldString: string,
-  newString: string,
-  cwd: string,
-): Promise<string> {
-  const resolved = resolvePath(filePath, cwd)
-  const content = await fs.readFile(resolved, 'utf-8')
-
-  if (oldString === newString) {
-    return '[error] old_string 和 new_string 相同，无需修改'
-  }
-
-  const idx = content.indexOf(oldString)
-  if (idx === -1) {
-    return '[error] 在文件中找不到 old_string，请确保与文件内容完全一致（包括缩进和换行）'
-  }
-
-  const lastIdx = content.lastIndexOf(oldString)
-  if (idx !== lastIdx) {
-    return '[error] old_string 在文件中存在多处匹配，请提供更多上下文使其唯一'
-  }
-
-  const updated = content.slice(0, idx) + newString + content.slice(idx + oldString.length)
-  await fs.writeFile(resolved, updated, 'utf-8')
-
-  const startLine = content.slice(0, idx).split('\n').length
-  const oldLines = oldString.split('\n').length
-  const newLines = newString.split('\n').length
-  return `已编辑 ${resolved}（第 ${startLine} 行起，${oldLines} 行 → ${newLines} 行）`
-}
-
 function text(content: string): ToolResult {
   return { content }
 }
@@ -564,16 +549,14 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           onOutput: options?.onOutput,
           toolCallId: options?.toolCallId,
         }))
-      case 'read_file':
-        return text(await readFile(args.path as string, cwd))
-      case 'write_file': {
-        const applyOpts = options?.applyModel && options?.applyApiKey && options?.applyBaseURL
-          ? { model: options.applyModel, apiKey: options.applyApiKey, baseURL: options.applyBaseURL }
-          : undefined
-        return text(await writeFile(args.path as string, args.content as string, cwd, applyOpts))
-      }
-      case 'append_file':
-        return text(await appendFile(args.path as string, args.content as string, cwd))
+      case 'Read':
+        return text(await readTool(args.path as string, args.offset as number | undefined, args.limit as number | undefined, cwd))
+      case 'Write':
+        return text(await writeTool(args.path as string, args.content as string, cwd))
+      case 'StrReplace':
+        return text(await strReplaceTool(args.path as string, args.old_string as string, args.new_string as string, args.replace_all as boolean | undefined, cwd))
+      case 'Delete':
+        return text(await deleteTool(args.path as string, cwd))
       case 'list_directory':
         return text(await listDirectory(args.path as string | undefined, cwd))
       case 'grep_search':
@@ -584,13 +567,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           args.file_glob as string | undefined,
           cwd,
         ))
-      case 'edit_file':
-        return text(await editFile(
-          args.path as string,
-          args.old_string as string,
-          args.new_string as string,
-          cwd,
-        ))
+      case 'apply_patch': {
+        const parsed = parsePatch(args.patch as string)
+        if (typeof parsed === 'string') return text(`[error] ${parsed}`)
+        return text(await applyPatch(parsed, cwd))
+      }
 
       default:
         return text(`[error] 未知工具: ${name}`)

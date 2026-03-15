@@ -42,6 +42,8 @@
     "ai": "^6.0.105",
     "electron-store": "^11.0.2",
     "marked": "^17.0.3",
+    "markmap-lib": "^0.18.12",
+    "markmap-view": "^0.18.12",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.1.0",
     "tributejs": "^5.1.3"

@@ -84,16 +84,7 @@ function handlePaste(e: ClipboardEvent) {
 
 function handleDrop(e: DragEvent) {
   e.preventDefault()
-  // Handle file references from sidebar
-  const fileRefsData = e.dataTransfer?.getData('application/x-file-refs')
-  if (fileRefsData) {
-    try {
-      const refs: FileReference[] = JSON.parse(fileRefsData)
-      if (refs.length) addFileReferences(refs)
-    } catch {}
-    return
-  }
-  // Handle image files
+  // Image files only — file references are handled by ChatComposer's input-card
   const files = e.dataTransfer?.files
   if (!files) return
   for (let i = 0; i < files.length; i++) {
@@ -157,7 +148,6 @@ onMounted(() => {
       <ChatComposer
         v-model="inputText"
         variant="welcome"
-        view-transition-name="chat-composer"
         :pending-images="pendingImages"
         :providers="providers"
         :active-provider-id="activeProviderId"
@@ -180,12 +170,16 @@ onMounted(() => {
 .welcome-screen {
   height: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
   background: var(--c-base);
   -webkit-app-region: drag;
   position: relative;
   overflow: hidden;
+}
+
+:root:not([data-theme="dark"]) .welcome-screen {
+  background: #ffffff;
 }
 
 .welcome-content {
@@ -195,7 +189,7 @@ onMounted(() => {
   align-items: center;
   width: 100%;
   max-width: 720px;
-  padding: 0 24px;
+  padding: 0 24px 32px;
   position: relative;
 }
 

@@ -44,9 +44,6 @@ interface AgentRunParams {
   signal?: AbortSignal
   disabledSkills?: string[]
   tabContext?: string
-  applyModel?: string
-  applyApiKey?: string
-  applyBaseURL?: string
 }
 
 function accumulateToolCalls(accumulated: Map<number, ToolCall>, deltas: ToolCallDelta[]) {
@@ -233,7 +230,7 @@ const VIRTUAL_TOOLS = new Set([
 ])
 
 const SAFE_TOOLS = new Set([
-  'read_file',
+  'Read',
   'list_directory',
   'grep_search',
 ])
@@ -291,7 +288,7 @@ function waitForConfirmation(requestId: string, toolCallId: string, signal?: Abo
 }
 
 export async function runAgentLoop(params: AgentRunParams) {
-  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext, applyModel, applyApiKey, applyBaseURL } = params
+  const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext } = params
 
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter(s => s.enabled)
@@ -336,7 +333,7 @@ export async function runAgentLoop(params: AgentRunParams) {
         args = JSON.parse(tc.function.arguments)
       } catch {
         const errorContent = result.finishReason === 'length'
-          ? `[error] 你的输出超出了 token 上限，工具参数被截断导致 JSON 不完整，${tc.function.name} 未执行。请将内容拆分为多次调用：先用 write_file 写入文件的前半部分，再用 append_file 逐段追加剩余内容，确保每次调用的 content 足够短。`
+          ? `[error] 你的输出超出了 token 上限，工具参数被截断导致 JSON 不完整，${tc.function.name} 未执行。请将操作拆分为多次较小的调用，确保每次调用的参数足够短。`
           : `[error] 工具参数 JSON 格式错误，${tc.function.name} 未执行。请检查参数格式后重试。`
 
         const toolMsg: Message = {
@@ -423,9 +420,6 @@ export async function runAgentLoop(params: AgentRunParams) {
         onOutput: (chunk) => {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },
-        applyModel,
-        applyApiKey,
-        applyBaseURL,
       }
       const toolResult = await executeTool(tc.function.name, args, cwd, execOptions)
 

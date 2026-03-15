@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('aiChat', {
   getConfig() {
     return ipcRenderer.invoke('ai:get-config')
   },
-  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; applyProviderId: string; applyModel: string; maxIterations: number; autoApproveAll: boolean }) {
+  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; maxIterations: number; autoApproveAll: boolean }) {
     return ipcRenderer.invoke('ai:save-config', config)
   },
   setActive(providerId: string, model: string) {
@@ -257,6 +257,12 @@ contextBridge.exposeInMainWorld('fsApi', {
   },
   createDir(dirPath: string): Promise<{ error?: string }> {
     return ipcRenderer.invoke('fs:create-dir', dirPath)
+  },
+  movePath(srcPath: string, destDir: string): Promise<{ newPath: string; error?: string }> {
+    return ipcRenderer.invoke('fs:move-path', srcPath, destDir)
+  },
+  renamePath(srcPath: string, newName: string): Promise<{ newPath: string; error?: string }> {
+    return ipcRenderer.invoke('fs:rename-path', srcPath, newName)
   },
 })
 

@@ -339,6 +339,7 @@ function splitPaneAt(node: PaneNode, paneId: string, position: Exclude<DropPosit
     const direction = position === 'left' || position === 'right' ? 'row' : 'column'
     Object.assign(node as any, {
       type: 'split',
+      id: `split_${Date.now()}_${Math.random().toString(36).slice(2)}`,
       direction,
       ratio: 0.5,
       first: insertBefore ? newLeaf : currentLeaf,
@@ -649,6 +650,32 @@ function onDropZoneDrop(paneId: string, position: DropPosition) {
   clearDragState()
 }
 
+function onFileRefDrop(paneId: string, position: DropPosition, filePaths: string[]) {
+  if (!filePaths.length) return
+  const c = getCtx()
+
+  // Create editor tabs for each file
+  const tabs: TabInfo[] = filePaths.map(fp => createTab(EDITOR_PREFIX + fp))
+
+  if (position === 'center') {
+    // Add to existing pane
+    const pane = findPaneById(c.root, paneId)
+    if (!pane) return
+    for (const tab of tabs) {
+      if (!pane.tabs.some(t => t.convId === tab.convId)) {
+        pane.tabs.push(tab)
+      }
+    }
+    pane.activeTabIdx = pane.tabs.length - 1
+    c.activePaneId = pane.id
+  } else {
+    // Split into new pane
+    const newPane = createPane(tabs)
+    splitPaneAt(c.root, paneId, position, newPane)
+    c.activePaneId = newPane.id
+  }
+}
+
 function onTabInsertDrop(paneId: string, index: number) {
   moveDraggedTabToIndex(paneId, index)
   clearDragState()
@@ -865,6 +892,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         @split-resize-start="onSplitResizeStart"
         @split-resize-end="onSplitResizeEnd"
         @split-resize="onSplitResize"
+        @file-ref-drop="onFileRefDrop"
       />
 
       <button class="settings-fab" title="设置" @click="showSettings = true">
@@ -919,15 +947,5 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   color: var(--c-text);
   background: var(--c-surface0);
   border-color: var(--c-surface2);
-}
-
-:global(::view-transition-group(chat-composer)) {
-  z-index: 40;
-}
-
-:global(::view-transition-old(chat-composer)),
-:global(::view-transition-new(chat-composer)) {
-  animation-duration: 360ms;
-  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 </style>
