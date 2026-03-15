@@ -58,9 +58,12 @@ type StoreSchema = {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
+  applyProviderId: string
+  applyModel: string
   projects: ProjectData[]
   conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
   disabledSkills: string[]
+  workspaceState: any
 }
 
 const store = new Store<StoreSchema>({
@@ -73,9 +76,12 @@ const store = new Store<StoreSchema>({
     providers: [],
     activeProviderId: '',
     activeModel: '',
+    applyProviderId: '',
+    applyModel: '',
     projects: [],
     conversations: {},
     disabledSkills: [],
+    workspaceState: null,
   },
 })
 
@@ -228,6 +234,8 @@ ipcMain.handle('ai:get-config', () => {
     providers: store.get('providers') || [],
     activeProviderId: store.get('activeProviderId') || '',
     activeModel: store.get('activeModel') || '',
+    applyProviderId: store.get('applyProviderId') || '',
+    applyModel: store.get('applyModel') || '',
     maxIterations: store.get('maxIterations') ?? 0,
     autoApproveAll: store.get('autoApproveAll') ?? false,
   }
@@ -237,12 +245,16 @@ ipcMain.handle('ai:save-config', (_, config: {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
+  applyProviderId: string
+  applyModel: string
   maxIterations: number
   autoApproveAll: boolean
 }) => {
   store.set('providers', config.providers)
   store.set('activeProviderId', config.activeProviderId)
   store.set('activeModel', config.activeModel)
+  store.set('applyProviderId', config.applyProviderId)
+  store.set('applyModel', config.applyModel)
   store.set('maxIterations', config.maxIterations)
   store.set('autoApproveAll', config.autoApproveAll)
 })
@@ -436,7 +448,22 @@ ipcMain.on('agent:start', async (event, payload: {
     const maxIterations = store.get('maxIterations') ?? 0
     const autoApproveAll = store.get('autoApproveAll') ?? false
     const disabledSkills = store.get('disabledSkills') || []
-    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills, tabContext: payload.tabContext })
+
+    let applyApiKey = apiKey
+    let applyBaseURL = baseURL
+    let applyModelName = model
+    const applyPid = store.get('applyProviderId') || ''
+    const applyMod = store.get('applyModel') || ''
+    if (applyPid && applyMod) {
+      try {
+        const applyConfig = getAiConfig(applyPid)
+        applyApiKey = applyConfig.apiKey
+        applyBaseURL = applyConfig.baseURL
+        applyModelName = applyMod
+      } catch { /* fall back to main model */ }
+    }
+
+    await runAgentLoop({ requestId, model, messages, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal: abortController.signal, disabledSkills, tabContext: payload.tabContext, applyModel: applyModelName, applyApiKey, applyBaseURL })
   } catch (err: any) {
     if (err.name === 'AbortError') {
       sender.send('agent:done', { requestId, stopped: true })
@@ -608,6 +635,14 @@ ipcMain.handle('conversation:save-messages', (_, convId: string, messages: Store
     conversations[convId].messages = messages
     store.set('conversations', conversations)
   }
+})
+
+ipcMain.handle('workspace:save', (_, state: any) => {
+  store.set('workspaceState', state)
+})
+
+ipcMain.handle('workspace:load', () => {
+  return store.get('workspaceState') || null
 })
 
 ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabContext?: string }) => {

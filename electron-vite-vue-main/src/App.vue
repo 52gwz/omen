@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, provide, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, provide, reactive, ref, watch } from 'vue'
 import ChatView from './components/ChatView.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
@@ -86,6 +86,109 @@ function ensureCtx(key: string): TabContext {
 }
 
 watch(ctxKey, (key) => ensureCtx(key), { immediate: true })
+
+// ---- Workspace state persistence ----
+
+function serializeNode(node: PaneNode): any {
+  if (node.type === 'pane') {
+    return {
+      type: 'pane',
+      pane: {
+        id: node.pane.id,
+        tabs: node.pane.tabs.map(t => ({ id: t.id, convId: t.convId })),
+        activeTabIdx: node.pane.activeTabIdx,
+      },
+    }
+  }
+  return {
+    type: 'split',
+    direction: node.direction,
+    ratio: node.ratio,
+    first: serializeNode(node.first),
+    second: serializeNode(node.second),
+  }
+}
+
+function serializeWorkspace() {
+  const contexts: Record<string, any> = {}
+  for (const [key, ctx] of Object.entries(tabContexts)) {
+    contexts[key] = {
+      root: serializeNode(ctx.root),
+      activePaneId: ctx.activePaneId,
+    }
+  }
+  return {
+    contexts,
+    activeProjectId: activeProject.value?.id || null,
+    tabIdCounter,
+    paneIdCounter,
+  }
+}
+
+function deserializeNode(data: any): PaneNode {
+  if (data.type === 'pane') {
+    return {
+      type: 'pane',
+      pane: {
+        id: data.pane.id,
+        tabs: data.pane.tabs.map((t: any) => ({ id: t.id, convId: t.convId })),
+        activeTabIdx: data.pane.activeTabIdx,
+      },
+    }
+  }
+  return {
+    type: 'split',
+    direction: data.direction,
+    ratio: data.ratio,
+    first: deserializeNode(data.first),
+    second: deserializeNode(data.second),
+  }
+}
+
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+function debouncedSave() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = setTimeout(() => {
+    window.workspaceApi.save(serializeWorkspace())
+  }, 500)
+}
+
+async function restoreWorkspace() {
+  const saved = await window.workspaceApi.load()
+  if (!saved?.contexts) return
+
+  // Restore counters to avoid ID collisions
+  if (saved.tabIdCounter) tabIdCounter = saved.tabIdCounter
+  if (saved.paneIdCounter) paneIdCounter = saved.paneIdCounter
+
+  // Restore tab contexts
+  for (const [key, ctx] of Object.entries(saved.contexts) as [string, any][]) {
+    try {
+      tabContexts[key] = {
+        root: deserializeNode(ctx.root),
+        activePaneId: ctx.activePaneId,
+      }
+    } catch {
+      // Skip corrupted context
+    }
+  }
+
+  // Restore active project
+  if (saved.activeProjectId) {
+    const projects = await window.projectApi.list()
+    const project = projects.find(p => p.id === saved.activeProjectId)
+    if (project) activeProject.value = project
+  }
+}
+
+onMounted(async () => {
+  await restoreWorkspace()
+
+  // Watch tab contexts deeply for auto-save
+  watch(() => tabContexts, debouncedSave, { deep: true })
+  watch(activeProject, debouncedSave)
+})
 
 function getCtx(): TabContext {
   return ensureCtx(ctxKey.value)

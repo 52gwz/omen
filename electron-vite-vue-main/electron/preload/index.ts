@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('aiChat', {
   getConfig() {
     return ipcRenderer.invoke('ai:get-config')
   },
-  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; maxIterations: number; autoApproveAll: boolean }) {
+  saveConfig(config: { providers: any[]; activeProviderId: string; activeModel: string; applyProviderId: string; applyModel: string; maxIterations: number; autoApproveAll: boolean }) {
     return ipcRenderer.invoke('ai:save-config', config)
   },
   setActive(providerId: string, model: string) {
@@ -211,6 +211,16 @@ contextBridge.exposeInMainWorld('skillsApi', {
   },
   importSkill(): Promise<{ success: boolean; error?: string }> {
     return ipcRenderer.invoke('skills:import')
+  },
+})
+
+// --------- Workspace State API ---------
+contextBridge.exposeInMainWorld('workspaceApi', {
+  save(state: any): Promise<void> {
+    return ipcRenderer.invoke('workspace:save', state)
+  },
+  load(): Promise<any> {
+    return ipcRenderer.invoke('workspace:load')
   },
 })
 

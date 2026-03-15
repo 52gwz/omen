@@ -18,6 +18,8 @@ interface AiChatConfig {
   providers: ModelProvider[]
   activeProviderId: string
   activeModel: string
+  applyProviderId: string
+  applyModel: string
   maxIterations: number
   autoApproveAll: boolean
 }
@@ -152,6 +154,11 @@ interface FsApi {
   writeFile(filePath: string, content: string): Promise<{ error?: string }>
 }
 
+interface WorkspaceApi {
+  save(state: any): Promise<void>
+  load(): Promise<any>
+}
+
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
   aiChat: AiChatApi
@@ -161,4 +168,5 @@ interface Window {
   conversationApi: ConversationApi
   skillsApi: SkillsApi
   fsApi: FsApi
+  workspaceApi: WorkspaceApi
 }
