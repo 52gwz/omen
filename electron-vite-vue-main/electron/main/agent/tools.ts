@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { parsePatch, applyPatch } from './patch'
 
 export interface ToolDefinition {
   type: 'function'
@@ -126,20 +125,6 @@ export const toolDefinitions: ToolDefinition[] = [
           file_glob: { type: 'string', description: '按 glob 过滤文件，如 "*.ts"、"*.{js,vue}"' },
         },
         required: ['pattern'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'apply_patch',
-      description: '通过补丁格式修改文件。支持更新、新建和删除文件。',
-      parameters: {
-        type: 'object',
-        properties: {
-          patch: { type: 'string', description: '完整的补丁内容' },
-        },
-        required: ['patch'],
       },
     },
   },
@@ -567,11 +552,6 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           args.file_glob as string | undefined,
           cwd,
         ))
-      case 'apply_patch': {
-        const parsed = parsePatch(args.patch as string)
-        if (typeof parsed === 'string') return text(`[error] ${parsed}`)
-        return text(await applyPatch(parsed, cwd))
-      }
 
       default:
         return text(`[error] 未知工具: ${name}`)

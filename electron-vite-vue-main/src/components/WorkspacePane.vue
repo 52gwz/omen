@@ -419,6 +419,12 @@ watch(() => pane.value?.activeTabIdx, () => {
   nextTick(scrollActiveTabIntoView)
 })
 
+watch([canScrollLeft, canScrollRight], () => {
+  nextTick(() => {
+    requestAnimationFrame(scrollActiveTabIntoView)
+  })
+})
+
 watch(() => pane.value?.tabs.length, () => {
   nextTick(() => {
     updateScrollState()
@@ -601,8 +607,16 @@ onBeforeUnmount(() => {
               </svg>
             </button>
           </div>
+          <!-- + 按钮在没有滚动时跟随在最后一个 tab 后面 -->
+          <button v-if="!canScrollLeft && !canScrollRight" class="tab-add-btn inline" title="新建对话" @click.stop="addChatTab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
         </div>
-        <button class="tab-add-btn" title="新建对话" @click.stop="addChatTab">
+        <!-- + 按钮在有滚动时固定在右侧 -->
+        <button v-if="canScrollLeft || canScrollRight" class="tab-add-btn fixed" title="新建对话" @click.stop="addChatTab">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
@@ -1011,6 +1025,16 @@ onBeforeUnmount(() => {
 .tab-add-btn:hover {
   color: var(--c-blue);
   background: var(--c-surface0);
+}
+
+/* 内联模式：跟随在最后一个 tab 后面 */
+.tab-add-btn.inline {
+  margin-left: 2px;
+}
+
+/* 固定模式：固定在右侧 */
+.tab-add-btn.fixed {
+  /* 保持原有样式，固定在 tabs-scroll 容器外 */
 }
 
 .tab-browser-btn {
