@@ -5,7 +5,8 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 import WorkspacePane from './components/WorkspacePane.vue'
 import { MIN_SPLIT_RATIO } from './types/workspace'
-import type { CodeReference, DragTabState, DropPosition, DropTarget, FileReference, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from './types/workspace'
+import { useTheme } from './composables/useTheme'
+import type { CodeReference, DragTabState, DropPosition, DropTarget, FileReference, MentionTab, PaneLeafNode, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget, ChatMessage } from './types/workspace'
 
 const SKILLS_TAB_ID = '__skills__'
 const WEBVIEW_PREFIX = '__webview__:'
@@ -30,6 +31,8 @@ type DocumentWithViewTransition = Document & {
   }
 }
 
+const { theme, toggleTheme } = useTheme()
+
 const showSettings = ref(false)
 const chatRefs = ref<Record<string, InstanceType<typeof ChatView>>>({})
 const sidebarRef = ref<InstanceType<typeof Sidebar>>()
@@ -37,6 +40,16 @@ const sidebarRef = ref<InstanceType<typeof Sidebar>>()
 const runningConvIds = reactive(new Set<string>())
 const tabTitles = reactive<Record<string, string>>({})
 const activeProject = ref<ProjectData | null>(null)
+// 全局消息缓存，同一个 convId 共享同一个消息数组
+interface ConversationState {
+  messages: ChatMessage[]
+  currentRequestId?: string
+  isStreaming: boolean
+  chatMode?: 'chat' | 'agent'
+}
+const globalConvState = reactive<Record<string, ConversationState>>({})
+
+provide('globalConvState', globalConvState)
 const draggingTab = ref<DragTabState | null>(null)
 const splitResizeActive = ref(false)
 const dropTarget = ref<DropTarget | null>(null)
@@ -514,6 +527,7 @@ function onDeleteConversation(convId: string) {
   runningConvIds.delete(convId)
   delete chatRefs.value[convId]
   delete tabTitles[convId]
+  delete globalMessagesCache[convId]
   forEachPane(c.root, (pane) => {
     for (const tab of pane.tabs) {
       if (tab.convId === convId) tab.convId = ''
@@ -841,68 +855,101 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
 
 <template>
   <div class="app-root">
-    <Sidebar
-      ref="sidebarRef"
-      :running-conv-ids="runningConvIds"
-      :project-id="activeProject?.id"
-      :project-name="activeProject?.name"
-      :project-path="activeProject?.path"
-      @select-conversation="onSelectConversation"
-      @no-selection="onNoSelection"
-      @delete-conversation="onDeleteConversation"
-      @open-project="onOpenProject"
-      @close-project="onCloseProject"
-      @create-task="addNewTab"
-      @rename-project="onRenameProject"
-      @open-skills="openSkills"
-      @open-file="onOpenFile"
-      @preview-html="openWebView"
-    />
+    <!-- 全局顶部状态栏 -->
+    <div class="titlebar">
+      <div class="titlebar-left">
+        <div class="traffic-light-spacer"></div>
+        <button class="titlebar-icon-btn" title="折叠侧边栏" @click="sidebarRef?.toggleCollapse()">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
+        <button class="titlebar-icon-btn" :title="theme === 'light' ? '切换暗色' : '切换明亮'" @click="toggleTheme">
+          <svg v-if="theme === 'light'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5" />
+            <line x1="12" y1="1" x2="12" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+            <line x1="1" y1="12" x2="3" y2="12" />
+            <line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          </svg>
+        </button>
+      </div>
+      <div class="titlebar-right">
+        <button class="titlebar-icon-btn" title="设置" @click="showSettings = true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
+      </div>
+    </div>
 
-    <div class="main-area">
-      <WorkspacePane
-        v-if="currentRoot"
-        :node="currentRoot"
-        :active-pane-id="activePane?.id || ''"
+    <!-- 主内容区 -->
+    <div class="content-row">
+      <Sidebar
+        ref="sidebarRef"
         :running-conv-ids="runningConvIds"
-        :tab-titles="tabTitles"
+        :project-id="activeProject?.id"
         :project-name="activeProject?.name"
-        :dragging-tab="draggingTab"
-        :interaction-active="!!draggingTab || splitResizeActive"
-        :drop-target="dropTarget"
-        :tab-insert-target="tabInsertTarget"
-        :skills-tab-id="SKILLS_TAB_ID"
-        :webview-prefix="WEBVIEW_PREFIX"
-        :editor-prefix="EDITOR_PREFIX"
-        @focus-pane="focusPane"
-        @switch-tab="switchTab"
-        @add-tab="addNewTab"
-        @add-webview-tab="addNewWebviewTab"
-        @close-tab="closeTab"
-        @tab-drag-start="onTabDragStart"
-        @tab-drag-end="onTabDragEnd"
-        @drop-zone-drag-over="onDropZoneDragOver"
-        @drop-zone-drop="onDropZoneDrop"
-        @tab-insert-drag-over="onTabInsertDragOver"
-        @tab-insert-drop="onTabInsertDrop"
-        @streaming-change="onStreamingChange"
-        @title-change="onConvTitleChange"
-        @set-chat-ref="setChatRef"
-        @welcome-send="handleWelcomeSend"
-        @split-resize-start="onSplitResizeStart"
-        @split-resize-end="onSplitResizeEnd"
-        @split-resize="onSplitResize"
-        @file-ref-drop="onFileRefDrop"
+        :project-path="activeProject?.path"
+        @select-conversation="onSelectConversation"
+        @no-selection="onNoSelection"
+        @delete-conversation="onDeleteConversation"
+        @open-project="onOpenProject"
+        @close-project="onCloseProject"
+        @create-task="addNewTab"
+        @rename-project="onRenameProject"
+        @open-skills="openSkills"
+        @open-file="onOpenFile"
+        @preview-html="openWebView"
       />
 
-      <button class="settings-fab" title="设置" @click="showSettings = true">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-      </button>
+      <div class="main-area">
+        <WorkspacePane
+          v-if="currentRoot"
+          :node="currentRoot"
+          :active-pane-id="activePane?.id || ''"
+          :running-conv-ids="runningConvIds"
+          :tab-titles="tabTitles"
+          :project-name="activeProject?.name"
+          :dragging-tab="draggingTab"
+          :interaction-active="!!draggingTab || splitResizeActive"
+          :drop-target="dropTarget"
+          :tab-insert-target="tabInsertTarget"
+          :skills-tab-id="SKILLS_TAB_ID"
+          :webview-prefix="WEBVIEW_PREFIX"
+          :editor-prefix="EDITOR_PREFIX"
+          @focus-pane="focusPane"
+          @switch-tab="switchTab"
+          @add-tab="addNewTab"
+          @add-webview-tab="addNewWebviewTab"
+          @close-tab="closeTab"
+          @tab-drag-start="onTabDragStart"
+          @tab-drag-end="onTabDragEnd"
+          @drop-zone-drag-over="onDropZoneDragOver"
+          @drop-zone-drop="onDropZoneDrop"
+          @tab-insert-drag-over="onTabInsertDragOver"
+          @tab-insert-drop="onTabInsertDrop"
+          @streaming-change="onStreamingChange"
+          @title-change="onConvTitleChange"
+          @set-chat-ref="setChatRef"
+          @welcome-send="handleWelcomeSend"
+          @split-resize-start="onSplitResizeStart"
+          @split-resize-end="onSplitResizeEnd"
+          @split-resize="onSplitResize"
+          @file-ref-drop="onFileRefDrop"
+        />
 
-      <SettingsPanel v-if="showSettings" @close="onSettingsClose" />
+        <SettingsPanel v-if="showSettings" @close="onSettingsClose" />
+      </div>
     </div>
   </div>
 </template>
@@ -910,8 +957,65 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
 <style scoped>
 .app-root {
   display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100vh;
+  overflow: hidden;
+}
+
+.titlebar {
+  height: 38px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--c-mantle);
+  border-bottom: 1px solid var(--c-surface0);
+  -webkit-app-region: drag;
+  z-index: 100;
+}
+
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+}
+
+.traffic-light-spacer {
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.titlebar-icon-btn {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--c-overlay0);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s, background 0.2s;
+}
+
+.titlebar-icon-btn:hover {
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.content-row {
+  flex: 1;
+  display: flex;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -922,30 +1026,5 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   min-width: 0;
   min-height: 0;
   background: var(--c-base);
-}
-
-.settings-fab {
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--c-surface1) 85%, transparent);
-  background: color-mix(in srgb, var(--c-mantle) 92%, transparent);
-  color: var(--c-subtext0);
-  cursor: pointer;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
-  -webkit-app-region: no-drag;
-}
-
-.settings-fab:hover {
-  color: var(--c-text);
-  background: var(--c-surface0);
-  border-color: var(--c-surface2);
 }
 </style>

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, reactive, provide, onMounted, onUnmounted, watch, nextTick, computed, watchEffect } from 'vue'
-import { useTheme } from '../composables/useTheme'
 import FileTreeNode from './FileTreeNode.vue'
 
 const props = defineProps<{
@@ -23,8 +22,6 @@ const emit = defineEmits<{
   openFile: [filePath: string]
   previewHtml: [filePath: string]
 }>()
-
-const { theme, toggleTheme } = useTheme()
 
 const conversations = reactive<ConversationMeta[]>([])
 const projects = reactive<ProjectData[]>([])
@@ -412,21 +409,11 @@ function setActiveConv(convId: string) {
   isHomeActive.value = !convId
 }
 
-defineExpose({ loadConversations, setActiveConv })
+defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 </script>
 
 <template>
   <div class="sidebar" :class="{ 'sidebar-collapsed': collapsed, resizing: isResizing }" :style="{ width: actualWidth + 'px', minWidth: actualWidth + 'px' }">
-    <div class="titlebar-spacer"></div>
-
-    <div v-if="collapsed" class="collapsed-view">
-      <button class="collapse-toggle-btn" title="展开侧边栏" @click="toggleCollapse">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="9 18 15 12 9 6" />
-        </svg>
-      </button>
-    </div>
-
     <div v-show="!collapsed" class="sidebar-header">
       <!-- 项目模式 -->
       <template v-if="projectId">
@@ -453,30 +440,6 @@ defineExpose({ loadConversations, setActiveConv })
         <span class="sidebar-title">Omen</span>
       </template>
 
-      <div class="header-actions">
-        <button class="header-icon-btn" title="收起侧边栏" @click="toggleCollapse">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <line x1="9" y1="3" x2="9" y2="21" />
-          </svg>
-        </button>
-        <button class="header-icon-btn" :title="theme === 'light' ? '切换暗色' : '切换明亮'" @click="toggleTheme">
-          <svg v-if="theme === 'light'" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-          </svg>
-          <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="5" />
-            <line x1="12" y1="1" x2="12" y2="3" />
-            <line x1="12" y1="21" x2="12" y2="23" />
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-            <line x1="1" y1="12" x2="3" y2="12" />
-            <line x1="21" y1="12" x2="23" y2="12" />
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-          </svg>
-        </button>
-      </div>
     </div>
 
     <div v-show="!collapsed" class="sidebar-body">
@@ -689,7 +652,7 @@ defineExpose({ loadConversations, setActiveConv })
 
 <style scoped>
 .sidebar {
-  height: 100vh;
+  height: 100%;
   background: var(--c-mantle);
   border-right: 1px solid var(--c-surface0);
   display: flex;
@@ -702,32 +665,6 @@ defineExpose({ loadConversations, setActiveConv })
 
 .sidebar.resizing {
   transition: none;
-}
-
-.collapsed-view {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 8px;
-  -webkit-app-region: no-drag;
-}
-
-.collapse-toggle-btn {
-  background: none;
-  border: none;
-  color: var(--c-overlay0);
-  cursor: pointer;
-  padding: 6px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s, background 0.2s;
-}
-
-.collapse-toggle-btn:hover {
-  color: var(--c-text);
-  background: var(--c-surface0);
 }
 
 .sidebar-body {
@@ -763,11 +700,6 @@ defineExpose({ loadConversations, setActiveConv })
 
 .resize-handle:hover::after {
   background: var(--c-blue);
-}
-
-.titlebar-spacer {
-  height: 28px;
-  flex-shrink: 0;
 }
 
 .sidebar-header {
@@ -850,33 +782,6 @@ defineExpose({ loadConversations, setActiveConv })
   font-family: inherit;
   width: 100%;
   min-width: 0;
-}
-
-.header-actions {
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
-}
-
-.header-icon-btn {
-  -webkit-app-region: no-drag;
-  background: none;
-  border: none;
-  color: var(--c-overlay0);
-  cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s, background 0.2s;
-}
-
-.header-icon-btn:hover {
-  color: var(--c-text);
-  background: var(--c-surface0);
 }
 
 /* ---- Projects Section ---- */
