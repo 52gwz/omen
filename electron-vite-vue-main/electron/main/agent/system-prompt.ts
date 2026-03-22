@@ -1,29 +1,59 @@
 import type { SkillMetadata } from './skills'
+import os from 'node:os'
 
-function renderSkillsSection(skills: SkillMetadata[]): string {
-  if (skills.length === 0) return ''
+export function buildUserInfoBlock(cwd: string): string {
+  const platform = os.platform()
+  const release = os.release()
+  const shell = process.env.SHELL || 'unknown'
+  const today = new Date().toLocaleDateString('zh-CN', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+  })
 
-  const list = skills.map((s) => `- ${s.name}: ${s.description} (file: ${s.path})`).join('\n')
-  return `
-
-## Skills
-
-技能是存储在 SKILL.md 文件中的一组本地指令。下面列出了当前可用的技能，每条包含名称、描述和文件路径，方便你在需要时打开源文件获取完整指令。
-
-### 可用技能
-
-${list}
-
-### 使用方法
-
-- 如果用户提到某个技能名称，或者当前任务明显匹配某个技能的描述，你必须使用该技能。
-- 使用技能时，先用 Read 读取对应的 SKILL.md 文件，然后按其中的指令执行。
-- 不要猜测技能的用法，始终以 SKILL.md 中的内容为准。
-- 多个技能被触发时，选择最小必要集合，并说明你使用了哪些技能。`
+  return `<user_info>
+OS: ${platform} ${release}
+Shell: ${shell}
+工作目录: ${cwd}
+日期: ${today}
+</user_info>`
 }
 
-export function buildSystemPrompt(cwd: string, skills: SkillMetadata[] = [], tabContext?: string): string {
+export function buildSkillsBlock(skills: SkillMetadata[]): string {
+  if (skills.length === 0) return ''
+
+  const list = skills.map((s) =>
+    `<skill name="${s.name}" path="${s.path}">${s.description}</skill>`
+  ).join('\n')
+
+  return `<agent_skills>
+${list}
+</agent_skills>`
+}
+
+export function buildOpenTabsBlock(tabContext: string): string {
+  return `<open_tabs>
+${tabContext}
+</open_tabs>`
+}
+
+export function buildSystemPrompt(cwd: string): string {
   return `你是 Omen 通用Agent，你和用户共享同一台电脑，帮助用户完成电脑操作、代码编写等任务。
+
+## 消息格式
+
+对话中的上下文信息通过 XML 标签嵌入在用户消息中：
+- 第一条用户消息包含 \`<user_info>\`（系统环境信息）和 \`<agent_skills>\`（可用技能列表）
+- 每条用户消息可能包含 \`<open_tabs>\`（用户当前打开的标签页）
+- 用户的实际指令始终在 \`<user_query>\` 标签中
+
+你的主要目标是响应 \`<user_query>\` 中的内容。上下文标签中的信息供你参考以更好地理解用户意图和当前环境。
+
+### 技能使用
+
+如果 \`<agent_skills>\` 中列出了可用技能：
+- 如果用户提到某个技能名称，或者当前任务明显匹配某个技能的描述，你必须使用该技能。
+- 使用技能时，先用 Read 读取对应 SKILL.md 文件的 path，然后按其中的指令执行。
+- 不要猜测技能的用法，始终以 SKILL.md 中的内容为准。
+- 多个技能被触发时，选择最小必要集合，并说明你使用了哪些技能。
 
 ## 工作环境
 
@@ -87,5 +117,5 @@ export function buildSystemPrompt(cwd: string, skills: SkillMetadata[] = [], tab
 ## 输出格式
 
 - 保持简洁，避免不必要的解释。任务简单时一句话搞定。
-- 做了较大改动时，简要说明做了什么和为什么，用户可以在编辑器中看到具体代码变更，不需要在回复中重复贴代码。
-${renderSkillsSection(skills)}${tabContext ? `\n\n## 用户当前环境\n\n${tabContext}` : ''}`}
+- 做了较大改动时，简要说明做了什么和为什么，用户可以在编辑器中看到具体代码变更，不需要在回复中重复贴代码。`
+}

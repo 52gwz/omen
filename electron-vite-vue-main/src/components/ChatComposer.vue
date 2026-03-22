@@ -267,7 +267,7 @@ defineExpose({
 <template>
   <div class="composer-shell" :class="`variant-${variant}`" :style="shellStyle">
     <div class="input-card" @drop="handleComposerDrop" @dragover="handleComposerDragOver">
-      <div v-if="variant !== 'edit' && pendingImages.length" class="composer-pending-images">
+      <div v-if="pendingImages.length" class="composer-pending-images">
         <div v-for="(img, idx) in pendingImages" :key="idx" class="pending-img-item">
           <img :src="img" class="pending-img-thumb" />
           <button class="pending-img-remove" title="移除" @click="emit('removeImage', idx)">
@@ -279,7 +279,7 @@ defineExpose({
         </div>
       </div>
 
-      <div v-if="variant !== 'edit' && pendingCodeReferences.length" class="composer-references">
+      <div v-if="pendingCodeReferences.length" class="composer-references">
         <div v-for="(cref, idx) in pendingCodeReferences" :key="idx" class="reference-item">
           <div class="reference-header">
             <svg class="reference-file-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -298,7 +298,7 @@ defineExpose({
         </div>
       </div>
 
-      <div v-if="variant !== 'edit' && pendingFileReferences.length" class="composer-file-refs">
+      <div v-if="pendingFileReferences.length" class="composer-file-refs">
         <div v-for="(fref, idx) in pendingFileReferences" :key="fref.filePath" class="file-ref-chip">
           <svg v-if="fref.isDirectory" class="file-ref-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -331,8 +331,15 @@ defineExpose({
         <span v-if="!editorHasContent" class="composer-placeholder">{{ placeholder }}</span>
       </div>
 
-      <div v-if="variant !== 'edit'" class="card-toolbar">
+      <div class="card-toolbar">
         <div class="toolbar-left">
+          <button class="toolbar-icon-btn" title="添加图片" @click="emit('selectImages')">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </button>
           <div ref="modeDropdownRef" class="mode-dropdown">
             <button class="mode-trigger" @click.stop="modeDropdownOpen = !modeDropdownOpen">
               <span class="mode-dot" :class="chatMode"></span>
@@ -381,20 +388,12 @@ defineExpose({
               </div>
             </Transition>
           </div>
-
-          <button class="toolbar-icon-btn" title="添加图片" @click="emit('selectImages')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="M21 15l-5-5L5 21" />
-            </svg>
-          </button>
         </div>
 
         <div class="toolbar-right">
           <div ref="modelSelectorRef" class="model-selector">
             <button class="model-selector-trigger" @click.stop="modelSelectorOpen = !modelSelectorOpen">
-              <span class="model-name">{{ currentModel || '未配置模型' }}</span>
+              <span class="model-name" :title="currentModel || '未配置模型'">{{ currentModel || '未配置模型' }}</span>
               <svg
                 class="selector-chevron"
                 :class="{ open: modelSelectorOpen }"
@@ -537,7 +536,7 @@ defineExpose({
 }
 
 .pending-img-remove:hover {
-  background: var(--c-red, #e64553);
+  background: color-mix(in srgb, var(--c-red, #e64553) 38%, var(--c-surface2));
   color: #fff;
 }
 
@@ -613,6 +612,11 @@ defineExpose({
   justify-content: space-between;
   padding: 10px 14px;
   gap: 8px;
+  min-width: 0;
+}
+
+.toolbar-left {
+  flex-shrink: 0;
 }
 
 .toolbar-left,
@@ -622,34 +626,46 @@ defineExpose({
   gap: 4px;
 }
 
+.toolbar-right {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+}
+
 .toolbar-icon-btn {
   width: 34px;
   height: 34px;
   border-radius: 8px;
-  border: 1px solid var(--c-surface0);
-  background: var(--c-base);
+  border: none;
+  background: transparent;
   color: var(--c-overlay1);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  transition: color 0.2s, background 0.2s;
 }
 
 .toolbar-icon-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface-hover);
-  border-color: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface0) 38%, var(--c-mantle) 62%);
 }
 
 .model-selector {
   position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .model-selector-trigger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: min(100%, 240px);
+  min-width: 0;
+  width: auto;
+  overflow: hidden;
   background: none;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -661,17 +677,22 @@ defineExpose({
 }
 
 .model-selector-trigger:hover {
-  background: var(--c-surface0);
-  border-color: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface0) 38%, var(--c-mantle) 62%);
+  border-color: color-mix(in srgb, var(--c-surface1) 35%, var(--c-mantle) 65%);
 }
 
 .model-name {
+  flex: 1;
+  min-width: 0;
   font-size: 0.82rem;
   color: var(--c-subtext0);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .selector-chevron {
+  flex-shrink: 0;
   color: var(--c-overlay0);
   transition: transform 0.2s ease;
 }
@@ -741,7 +762,7 @@ defineExpose({
 }
 
 .model-item:hover {
-  background: var(--c-surface-hover);
+  background: color-mix(in srgb, var(--c-surface-hover) 36%, var(--c-surface-alt) 64%);
 }
 
 .model-item.active {
@@ -779,8 +800,8 @@ defineExpose({
 }
 
 .mode-trigger:hover {
-  background: var(--c-surface0);
-  border-color: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface0) 38%, var(--c-mantle) 62%);
+  border-color: color-mix(in srgb, var(--c-surface1) 35%, var(--c-mantle) 65%);
 }
 
 .mode-dot {
@@ -837,7 +858,7 @@ defineExpose({
 }
 
 .mode-option:hover {
-  background: var(--c-surface-hover);
+  background: color-mix(in srgb, var(--c-surface-hover) 36%, var(--c-surface-alt) 64%);
 }
 
 .mode-option.active {
@@ -852,6 +873,9 @@ defineExpose({
 .action-circle-btn {
   width: 36px;
   height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+  flex-shrink: 0;
   border-radius: 50%;
   border: none;
   background: var(--c-surface0);
@@ -865,7 +889,7 @@ defineExpose({
 }
 
 .action-circle-btn:hover:not(:disabled) {
-  background: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface1) 32%, var(--c-surface0) 68%);
   color: var(--c-text);
 }
 
@@ -880,8 +904,8 @@ defineExpose({
 }
 
 .action-circle-btn.danger:hover {
-  background: color-mix(in srgb, var(--c-red, #e64553) 22%, var(--c-surface1));
-  color: #fff;
+  background: color-mix(in srgb, var(--c-red, #e64553) 26%, var(--c-surface0) 74%);
+  color: var(--c-red, #e64553);
 }
 
 .composer-references {
@@ -946,7 +970,7 @@ defineExpose({
 }
 
 .reference-remove:hover {
-  background: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface1) 38%, transparent);
   color: var(--c-red, #e64553);
 }
 
@@ -1022,7 +1046,7 @@ defineExpose({
 }
 
 .file-ref-remove:hover {
-  background: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-surface1) 38%, var(--c-surface0) 62%);
   color: var(--c-red, #e64553);
 }
 
@@ -1073,12 +1097,12 @@ defineExpose({
 }
 
 .mention-tribute-item:hover {
-  background: var(--c-surface-hover, #313244);
+  background: color-mix(in srgb, var(--c-surface-hover, #3b3b52) 36%, var(--c-surface-alt, #2a2a3c) 64%);
 }
 
 .mention-tribute-item-active,
 .mention-tribute-item-active:hover {
-  background: var(--c-surface0, #313244);
+  background: color-mix(in srgb, var(--c-surface0, #313244) 42%, var(--c-surface-alt, #2a2a3c) 58%);
   color: var(--c-blue, #89b4fa);
 }
 

@@ -320,7 +320,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 }
 
 .file-item.selected {
-  background: color-mix(in srgb, var(--c-blue) 7%, var(--c-chrome-bg));
+  background: color-mix(in srgb, var(--c-blue) 15%, var(--c-chrome-bg));
   color: var(--c-blue);
 }
 
@@ -333,7 +333,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 }
 
 .file-item.drop-target {
-  background: color-mix(in srgb, var(--c-blue) 11%, var(--c-chrome-bg));
+  background: color-mix(in srgb, var(--c-blue) 21%, var(--c-chrome-bg));
   outline: 1px dashed var(--c-blue);
   outline-offset: -1px;
   border-radius: 5px;

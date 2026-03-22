@@ -3,7 +3,7 @@ import { ipcMain } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import { toolDefinitions, executeTool, type ToolExecOptions } from './tools'
-import { buildSystemPrompt } from './system-prompt'
+import { buildSystemPrompt, buildUserInfoBlock, buildSkillsBlock, buildOpenTabsBlock } from './system-prompt'
 import { loadSkills } from './skills'
 
 type MessageContent =
@@ -294,9 +294,49 @@ export async function runAgentLoop(params: AgentRunParams) {
   const enabledSkills = skills.filter(s => s.enabled)
 
   const allMessages: Message[] = [
-    { role: 'system', content: buildSystemPrompt(cwd, enabledSkills, tabContext) },
-    ...params.messages.map((m): Message => ({ role: m.role, content: m.content })),
+    { role: 'system', content: buildSystemPrompt(cwd) },
   ]
+
+  let firstUserSeen = false
+  for (const m of params.messages) {
+    if (m.role === 'user') {
+      const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = []
+
+      if (!firstUserSeen) {
+        firstUserSeen = true
+        let contextBlock = buildUserInfoBlock(cwd)
+        const skillsBlock = buildSkillsBlock(enabledSkills)
+        if (skillsBlock) contextBlock += '\n' + skillsBlock
+        parts.push({ type: 'text', text: contextBlock })
+      }
+
+      if (tabContext) {
+        parts.push({ type: 'text', text: buildOpenTabsBlock(tabContext) })
+      }
+
+      let userText = ''
+      const imageParts: Array<{ type: 'image_url'; image_url: { url: string } }> = []
+
+      if (typeof m.content === 'string') {
+        userText = m.content
+      } else if (Array.isArray(m.content)) {
+        for (const part of m.content) {
+          if (part.type === 'text') {
+            userText += (userText ? '\n' : '') + part.text
+          } else if (part.type === 'image_url') {
+            imageParts.push(part as { type: 'image_url'; image_url: { url: string } })
+          }
+        }
+      }
+
+      parts.push({ type: 'text', text: `<user_query>\n${userText}\n</user_query>` })
+      if (imageParts.length) parts.push(...imageParts)
+
+      allMessages.push({ role: 'user', content: parts })
+    } else {
+      allMessages.push({ role: m.role, content: m.content })
+    }
+  }
 
   for (let i = 0; maxIterations <= 0 || i < maxIterations; i++) {
     if (signal?.aborted) {

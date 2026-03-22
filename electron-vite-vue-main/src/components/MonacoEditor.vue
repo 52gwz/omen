@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--c-surface0);
-  background: var(--c-mantle);
+  background: #fff;
   gap: 8px;
   min-height: 36px;
 }
@@ -459,7 +459,14 @@ onBeforeUnmount(() => {
   padding: 24px 32px;
   font-size: 0.9rem;
   line-height: 1.7;
+  background: #fff;
   color: var(--c-text);
+  /* 白底预览：覆盖主题变量，暗色主题下仍可读 */
+  --c-text: #1e1e1e;
+  --c-subtext0: #5c5c5c;
+  --c-surface0: #e2e2e4;
+  --c-mantle: #f0f1f3;
+  --c-surface1: #b8b8c0;
   scrollbar-width: thin;
   scrollbar-color: var(--c-surface1) transparent;
 }

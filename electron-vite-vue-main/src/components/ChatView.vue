@@ -86,10 +86,6 @@ const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
 const errorMsg = ref('')
 const chatMode = ref<ChatMode>((localStorage.getItem('chatMode') as ChatMode) || 'agent')
-const debugMode = ref(true)
-const debugPanelOpen = ref(false)
-const debugSelectedMsg = ref<number | null>(null)
-const debugCopied = ref(false)
 
 const messagesContainer = ref<HTMLElement>()
 const composerRef = ref<InstanceType<typeof ChatComposer>>()
@@ -803,37 +799,6 @@ function closeImagePreview() {
   imagePreviewUrl.value = null
 }
 
-const debugSystemPrompt = ref<string | null>(null)
-
-const debugFullMessages = computed(() => {
-  const sys = debugSystemPrompt.value
-  const sysMsg = sys ? [{ role: 'system', content: sys }] : []
-  if (debugSelectedMsg.value !== null) {
-    const msg = messages[debugSelectedMsg.value]
-    return msg ? JSON.stringify(msg, null, 2) : 'null'
-  }
-  return JSON.stringify([...sysMsg, ...messages], null, 2)
-})
-
-const debugTabContext = computed(() => buildTabContext(agentCwd.value))
-
-async function refreshDebugSystemPrompt() {
-  debugSystemPrompt.value = await window.agentChat.getSystemPrompt({
-    cwd: agentCwd.value,
-    tabContext: buildTabContext(agentCwd.value) ?? undefined,
-  })
-}
-
-watch(debugPanelOpen, (open) => {
-  if (open) refreshDebugSystemPrompt()
-})
-
-function copyDebugJson() {
-  navigator.clipboard.writeText(debugFullMessages.value).then(() => {
-    debugCopied.value = true
-    setTimeout(() => { debugCopied.value = false }, 1500)
-  })
-}
 
 const cwdDisplay = computed(() => {
   const cwd = agentCwd.value
@@ -881,22 +846,6 @@ defineExpose({ loadConfig, sendWithContent })
 
 <template>
   <div class="chat-container">
-    <!-- 顶栏 -->
-    <div class="chat-topbar">
-      <button v-if="chatMode === 'agent'" class="cwd-btn" :title="agentCwd" @click="changeCwd">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-        {{ cwdDisplay }}
-      </button>
-      <button v-if="debugMode" class="debug-topbar-btn" @click="debugPanelOpen = !debugPanelOpen; debugSelectedMsg = null">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v1h4" /><path d="M18 8h-2V6a4 4 0 0 0-4-4" /><path d="M20 10a2 2 0 0 0-2-2h-2" /><rect x="6" y="10" width="12" height="10" rx="3" /><path d="M2 14h4" /><path d="M18 14h4" /><path d="M2 18h4" /><path d="M18 18h4" /><line x1="12" y1="10" x2="12" y2="20" />
-        </svg>
-        Debug
-      </button>
-    </div>
-
     <!-- 消息列表 -->
     <div ref="messagesContainer" class="messages-area" @scroll="onMessagesScroll">
       <div v-if="!messages.length" class="empty-state">
@@ -919,12 +868,6 @@ defineExpose({ loadConfig, sendWithContent })
         </div>
 
         <div v-else class="message-bubble" :class="{ 'agent-bubble': chatMode === 'agent' && msg.role === 'assistant', 'editing': editingIndex === i }">
-          <button
-            v-if="debugMode"
-            class="debug-msg-badge"
-            :title="`查看消息 #${i} 原始数据`"
-            @click.stop="debugSelectedMsg = debugSelectedMsg === i ? null : i; debugPanelOpen = true"
-          >{{ i }}</button>
           <!-- Reasoning -->
           <div v-if="msg.reasoning" class="chat-reasoning">
             <button class="reasoning-toggle" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
@@ -1032,8 +975,8 @@ defineExpose({ loadConfig, sendWithContent })
           <!-- Streaming cursor -->
           <span v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.toolCalls?.some(t => t.status === 'streaming' || t.status === 'pending' || t.status === 'running')" class="cursor-blink">▍</span>
 
-          <!-- Hover action buttons -->
-          <div class="msg-actions" v-if="!isStreaming || i !== messages.length - 1">
+          <!-- Hover action buttons（仅用户消息可复制 / 编辑） -->
+          <div class="msg-actions" v-if="msg.role === 'user' && (!isStreaming || i !== messages.length - 1)">
             <button class="msg-action-btn" :class="{ copied: copiedMsgIndex === i }" title="复制" @click.stop="copyMessage(msg)">
               <svg v-if="copiedMsgIndex !== i" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -1068,6 +1011,12 @@ defineExpose({ loadConfig, sendWithContent })
 
     <!-- 输入区 -->
     <div class="input-area" @drop="handleDrop" @dragover="handleDragOver">
+      <button v-if="chatMode === 'agent'" class="cwd-btn" :title="agentCwd" @click="changeCwd">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        {{ cwdDisplay }}
+      </button>
       <ChatComposer
         ref="composerRef"
         v-model="inputText"
@@ -1098,38 +1047,6 @@ defineExpose({ loadConfig, sendWithContent })
       </div>
     </Transition>
 
-    <!-- Debug Panel -->
-    <Transition name="debug-slide">
-      <div v-if="debugMode && debugPanelOpen" class="debug-panel">
-        <div class="debug-panel-header">
-          <span class="debug-panel-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2a4 4 0 0 0-4 4v2H6a2 2 0 0 0-2 2v1h4" /><path d="M18 8h-2V6a4 4 0 0 0-4-4" /><path d="M20 10a2 2 0 0 0-2-2h-2" /><rect x="6" y="10" width="12" height="10" rx="3" /><line x1="12" y1="10" x2="12" y2="20" />
-            </svg>
-            {{ debugSelectedMsg !== null ? `消息 #${debugSelectedMsg}` : `全部消息 (${messages.length + (debugSystemPrompt ? 1 : 0)})${debugSystemPrompt ? '，含系统提示' : ''}` }}
-          </span>
-          <div class="debug-panel-actions">
-            <button class="debug-action-btn" @click="copyDebugJson" :title="debugCopied ? '已复制' : '复制 JSON'">
-              <svg v-if="!debugCopied" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-              <svg v-else width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-            </button>
-            <button v-if="debugSelectedMsg !== null" class="debug-action-btn" @click="debugSelectedMsg = null" title="查看全部">全部</button>
-            <button class="debug-action-btn" @click="debugPanelOpen = false" title="关闭">✕</button>
-          </div>
-        </div>
-        <div v-if="debugTabContext" class="debug-context-section">
-          <div class="debug-context-label">Tab Context (隐藏系统消息)</div>
-          <pre class="debug-context-pre">{{ debugTabContext }}</pre>
-        </div>
-        <div class="debug-panel-body">
-          <pre class="debug-json">{{ debugFullMessages }}</pre>
-        </div>
-        <div class="debug-panel-footer">
-          <span>Raw Messages</span>
-          <span>{{ messages.length + (debugSystemPrompt ? 1 : 0) }} 条消息</span>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -1147,156 +1064,23 @@ defineExpose({ loadConfig, sendWithContent })
   background: #ffffff;
 }
 
-.chat-topbar {
-  display: flex;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--c-surface0);
-  gap: 8px;
-  min-height: 46px;
-  -webkit-app-region: drag;
-}
 
-/* -- Model Selector -- */
-.model-selector {
-  -webkit-app-region: no-drag;
-  position: relative;
-}
-
-.model-selector-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  padding: 3px 8px;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s, border-color 0.15s;
-  user-select: none;
-}
-
-.model-selector-btn:hover {
-  background: var(--c-surface0);
-  border-color: var(--c-surface1);
-}
-
-.model-provider-label {
-  font-size: 0.72rem;
-  color: var(--c-overlay0);
-  padding: 1px 6px;
-  background: var(--c-surface0);
-  border-radius: 4px;
-}
-
-.model-name-label {
-  font-size: 0.82rem;
-  color: var(--c-overlay1);
-}
-
-.model-selector-chevron {
-  color: var(--c-overlay0);
-  transition: transform 0.2s ease;
-}
-
-.model-selector-chevron.open {
-  transform: rotate(180deg);
-}
-
-.model-selector-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 220px;
-  max-width: 320px;
-  max-height: 360px;
-  overflow-y: auto;
-  background: var(--c-surface-alt);
-  border: 1px solid var(--c-surface1);
-  border-radius: 10px;
-  padding: 4px;
-  box-shadow: 0 8px 24px var(--c-shadow-heavy);
-  z-index: 100;
-}
-
-.model-selector-empty {
-  padding: 12px 14px;
-  font-size: 0.82rem;
-  color: var(--c-overlay0);
-  text-align: center;
-}
-
-.model-selector-group {
-  padding: 2px 0;
-}
-
-.model-selector-group + .model-selector-group {
-  border-top: 1px solid var(--c-surface0);
-  margin-top: 2px;
-  padding-top: 4px;
-}
-
-.model-selector-group-title {
-  padding: 6px 10px 4px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--c-overlay0);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.model-selector-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 7px 10px;
-  background: none;
-  border: none;
-  border-radius: 7px;
-  color: var(--c-text);
-  font-size: 0.84rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-  text-align: left;
-}
-
-.model-selector-item:hover {
-  background: var(--c-surface-hover);
-}
-
-.model-selector-item.active {
-  background: var(--c-surface0);
-  color: var(--c-blue);
-}
-
-.model-selector-no-models {
-  padding: 6px 10px;
-  font-size: 0.78rem;
-  color: var(--c-overlay0);
-  font-style: italic;
-}
 
 .cwd-btn {
-  -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
-  margin-right: 4px;
   color: var(--c-surface2);
   font-size: 0.75rem;
   white-space: nowrap;
-  max-width: 220px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   background: none;
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 3px 8px;
+  margin-bottom: 4px;
   cursor: pointer;
   font-family: inherit;
   transition: color 0.2s, background 0.2s, border-color 0.2s;
@@ -1595,8 +1379,8 @@ defineExpose({ loadConfig, sendWithContent })
 
 .reasoning-panel > .reasoning-content {
   margin-top: 8px;
-  padding: 14px 16px;
-  background: var(--c-surface-alt);
+  padding: 10px 0 10px 14px;
+  border-left: 3px solid color-mix(in srgb, var(--c-surface2) 38%, var(--c-base) 62%);
 }
 
 .reasoning-content {
@@ -1684,106 +1468,6 @@ defineExpose({ loadConfig, sendWithContent })
   padding: 12px 16px;
 }
 
-.input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-/* -- Mode dropdown -- */
-.mode-dropdown {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.mode-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 10px;
-  padding: 0 12px;
-  height: 40px;
-  color: var(--c-subtext1);
-  font-size: 0.82rem;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-  transition: background 0.2s, border-color 0.2s;
-  user-select: none;
-}
-
-.mode-trigger:hover {
-  background: var(--c-surface-hover);
-  border-color: var(--c-surface2);
-}
-
-.mode-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.mode-dot.chat {
-  background: var(--c-blue);
-}
-
-.mode-dot.agent {
-  background: var(--c-green);
-}
-
-.mode-chevron {
-  transition: transform 0.2s ease;
-}
-
-.mode-chevron.open {
-  transform: rotate(180deg);
-}
-
-.mode-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  min-width: 140px;
-  background: var(--c-surface-alt);
-  border: 1px solid var(--c-surface1);
-  border-radius: 10px;
-  padding: 4px;
-  box-shadow: 0 8px 24px var(--c-shadow-heavy);
-  z-index: 100;
-}
-
-.mode-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  background: none;
-  border: none;
-  border-radius: 7px;
-  color: var(--c-text);
-  font-size: 0.85rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-}
-
-.mode-option:hover {
-  background: var(--c-surface-hover);
-}
-
-.mode-option.active {
-  background: var(--c-surface0);
-}
-
-.check-icon {
-  margin-left: auto;
-  color: var(--c-blue);
-}
-
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: opacity 0.15s ease, transform 0.15s ease;
@@ -1793,73 +1477,6 @@ defineExpose({ loadConfig, sendWithContent })
 .dropdown-leave-to {
   opacity: 0;
   transform: translateY(4px);
-}
-
-/* -- Image upload button -- */
-.image-upload-btn {
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  color: var(--c-overlay0);
-  cursor: pointer;
-  width: 40px;
-  height: 40px;
-  min-height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: color 0.2s, background 0.2s, border-color 0.2s;
-}
-
-.image-upload-btn:hover {
-  color: var(--c-subtext1);
-  background: var(--c-surface-hover);
-  border-color: var(--c-surface2);
-}
-
-/* -- Pending images preview -- */
-.pending-images {
-  display: flex;
-  gap: 8px;
-  padding: 8px 0 4px;
-  overflow-x: auto;
-  flex-wrap: wrap;
-}
-
-.pending-image-item {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.pending-image-thumb {
-  width: 64px;
-  height: 64px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid var(--c-surface1);
-}
-
-.pending-image-remove {
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--c-surface2);
-  border: none;
-  color: var(--c-text);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s;
-}
-
-.pending-image-remove:hover {
-  background: var(--c-red, #e64553);
-  color: #fff;
 }
 
 /* -- Message images -- */
@@ -1923,102 +1540,6 @@ defineExpose({ loadConfig, sendWithContent })
 
 .image-preview-close:hover {
   background: rgba(255, 255, 255, 0.3);
-}
-
-/* -- Input & send -- */
-.chat-input {
-  flex: 1;
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 10px;
-  padding: 8px 14px;
-  color: var(--c-text);
-  font-size: 0.92rem;
-  outline: none;
-  resize: none;
-  line-height: 1.5;
-  min-height: 40px;
-  max-height: 160px;
-  font-family: inherit;
-  transition: border-color 0.2s;
-  box-sizing: border-box;
-}
-
-.chat-input:focus {
-  border-color: var(--c-blue);
-}
-
-.chat-input::placeholder {
-  color: var(--c-overlay0);
-}
-
-.send-btn {
-  background: var(--c-send-btn-bg);
-  color: var(--c-send-btn-text);
-  border: none;
-  border-radius: 10px;
-  width: 40px;
-  height: 40px;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: opacity 0.2s;
-}
-
-.send-btn:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
-.send-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.stop-btn {
-  background: var(--c-red, #e64553);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  width: 40px;
-  height: 40px;
-  min-height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: opacity 0.2s, background 0.2s;
-}
-
-.stop-btn:hover {
-  opacity: 0.85;
-}
-
-/* ---- Debug Mode ---- */
-.debug-topbar-btn {
-  -webkit-app-region: no-drag;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  background: rgba(250, 179, 40, 0.12);
-  border: 1px solid rgba(250, 179, 40, 0.3);
-  border-radius: 6px;
-  padding: 3px 10px;
-  color: #fab328;
-  font-size: 0.72rem;
-  font-weight: 600;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  cursor: pointer;
-  transition: background 0.2s;
-  letter-spacing: 0.02em;
-}
-
-.debug-topbar-btn:hover {
-  background: rgba(250, 179, 40, 0.2);
 }
 
 .message-bubble {
@@ -2089,155 +1610,6 @@ defineExpose({ loadConfig, sendWithContent })
   border-color: var(--c-green, #40a02b);
 }
 
-.debug-msg-badge {
-  position: absolute;
-  top: -8px;
-  left: -8px;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: none;
-  font-size: 0.62rem;
-  font-weight: 700;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(250, 179, 40, 0.2);
-  color: #fab328;
-  opacity: 0;
-  transition: opacity 0.15s;
-  z-index: 5;
-}
-
-.message-bubble:hover .debug-msg-badge,
-.debug-msg-badge:hover {
-  opacity: 1;
-}
-
-.user .debug-msg-badge {
-  left: auto;
-  right: -8px;
-}
-
-/* Debug Panel */
-.debug-panel {
-  position: absolute;
-  top: 47px;
-  right: 0;
-  bottom: 0;
-  width: min(420px, 80vw);
-  background: var(--c-base);
-  border-left: 1px solid var(--c-surface1);
-  display: flex;
-  flex-direction: column;
-  z-index: 200;
-  box-shadow: -4px 0 24px var(--c-shadow-heavy, rgba(0,0,0,0.15));
-}
-
-.debug-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--c-surface0);
-  gap: 8px;
-}
-
-.debug-panel-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #fab328;
-}
-
-.debug-panel-actions {
-  display: flex;
-  gap: 4px;
-}
-
-.debug-action-btn {
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface1);
-  border-radius: 5px;
-  padding: 2px 10px;
-  color: var(--c-subtext1);
-  font-size: 0.75rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.15s;
-}
-
-.debug-action-btn:hover {
-  background: var(--c-surface-hover);
-}
-
-.debug-panel-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 12px 14px;
-}
-
-.debug-json {
-  margin: 0;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 0.74rem;
-  line-height: 1.6;
-  color: var(--c-subtext1);
-  white-space: pre-wrap;
-  word-break: break-all;
-  tab-size: 2;
-}
-
-.debug-context-section {
-  padding: 8px 14px;
-  border-bottom: 1px solid var(--c-surface0);
-  background: color-mix(in srgb, var(--c-yellow) 6%, var(--c-surface0));
-}
-
-.debug-context-label {
-  font-size: 0.66rem;
-  font-family: 'SF Mono', 'Fira Code', monospace;
-  color: var(--c-yellow);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 4px;
-}
-
-.debug-context-pre {
-  margin: 0;
-  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  font-size: 0.74rem;
-  line-height: 1.6;
-  color: var(--c-subtext0);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.debug-panel-footer {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 14px;
-  border-top: 1px solid var(--c-surface0);
-  font-size: 0.68rem;
-  color: var(--c-overlay0);
-  font-family: 'SF Mono', 'Fira Code', monospace;
-}
-
-/* Debug slide transition */
-.debug-slide-enter-active,
-.debug-slide-leave-active {
-  transition: transform 0.25s ease, opacity 0.25s ease;
-}
-
-.debug-slide-enter-from,
-.debug-slide-leave-to {
-  transform: translateX(100%);
-  opacity: 0;
-}
 
 /* Plan card */
 .plan-card {

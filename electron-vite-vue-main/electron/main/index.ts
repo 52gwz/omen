@@ -622,6 +622,7 @@ ipcMain.handle('workspace:load', () => {
 })
 
 ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabContext?: string }) => {
+  const { buildUserInfoBlock, buildSkillsBlock, buildOpenTabsBlock } = await import('./agent/system-prompt')
   const disabledSkills: string[] = store.get('disabledSkills') || []
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter((s: any) => s.enabled)
@@ -630,7 +631,15 @@ ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabC
     : payload.cwd.startsWith('~/')
       ? path.join(os.homedir(), payload.cwd.slice(2))
       : payload.cwd
-  return buildSystemPrompt(cwd, enabledSkills, payload.tabContext)
+
+  let preview = buildSystemPrompt(cwd)
+  preview += '\n\n--- 第一条用户消息将包含 ---\n\n'
+  preview += buildUserInfoBlock(cwd)
+  const skillsBlock = buildSkillsBlock(enabledSkills)
+  if (skillsBlock) preview += '\n' + skillsBlock
+  if (payload.tabContext) preview += '\n' + buildOpenTabsBlock(payload.tabContext)
+
+  return preview
 })
 
 // ---- Skills IPC Handlers ----

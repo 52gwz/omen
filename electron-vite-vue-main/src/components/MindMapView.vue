@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: var(--c-base);
+  background: #fff;
 }
 
 .mindmap-toolbar {

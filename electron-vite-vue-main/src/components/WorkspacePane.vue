@@ -493,7 +493,7 @@ onBeforeUnmount(() => {
     </div>
     <div
       class="split-divider"
-      :class="[node.direction, { 'is-dragging': isResizingSplit }]"
+      :class="node.direction"
       @pointerdown="onSplitResizeStart"
     ></div>
     <div class="split-slot" :style="{ flex: String(1 - node.ratio) }">
@@ -537,7 +537,6 @@ onBeforeUnmount(() => {
   <div
     v-else
     class="workspace-pane"
-    :class="{ active: activePaneId === node.pane.id }"
     @mousedown="emit('focusPane', node.pane.id)"
   >
     <div class="tab-bar">
@@ -763,45 +762,70 @@ onBeforeUnmount(() => {
 
 .split-divider {
   position: relative;
-  background: transparent;
   flex-shrink: 0;
+  background: transparent;
   -webkit-app-region: no-drag;
   touch-action: none;
+  z-index: 2;
 }
 
+/* flex 只占 1px；透明 ::before 向两侧各伸出，总感应宽度 8px */
 .split-divider::before {
   content: '';
   position: absolute;
-  inset: 0;
-  margin: auto;
-  border-radius: 999px;
-  background: var(--c-surface1);
-  transition: background 0.15s ease;
-}
-
-.split-divider:hover::before,
-.split-divider.is-dragging::before {
-  background: var(--c-overlay0);
-}
-
-.split-divider.row {
-  width: 8px;
-  cursor: col-resize;
-}
-
-.split-divider.column {
-  height: 8px;
-  cursor: row-resize;
+  pointer-events: auto;
 }
 
 .split-divider.row::before {
-  width: 1px;
-  height: 100%;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  transform: translateX(-50%);
+  cursor: col-resize;
 }
 
 .split-divider.column::before {
-  width: 100%;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 8px;
+  transform: translateY(-50%);
+  cursor: row-resize;
+}
+
+.split-divider::after {
+  content: '';
+  position: absolute;
+  background: color-mix(in srgb, var(--c-surface1) 55%, var(--c-mantle));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.split-divider.row {
+  width: 1px;
+  cursor: col-resize;
+}
+
+.split-divider.row::after {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.split-divider.column {
   height: 1px;
+  cursor: row-resize;
+}
+
+.split-divider.column::after {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-50%);
 }
 
 .workspace-pane {
@@ -809,17 +833,10 @@ onBeforeUnmount(() => {
   flex-direction: column;
   background: var(--c-base);
   overflow: hidden;
-  border: 1px solid transparent;
-}
-
-.workspace-pane.active {
-  border-color: color-mix(in srgb, var(--c-blue) 35%, transparent);
 }
 
 .tab-bar {
   flex-shrink: 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--c-surface1) 55%, var(--c-mantle));
-  background: var(--c-mantle);
   -webkit-app-region: drag;
 }
 
