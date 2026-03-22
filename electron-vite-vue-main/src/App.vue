@@ -969,7 +969,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--c-mantle);
+  background: var(--c-chrome-bg);
   border-bottom: 1px solid var(--c-surface0);
   -webkit-app-region: drag;
   z-index: 100;
@@ -1009,7 +1009,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
 
 .titlebar-icon-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 
 .content-row {

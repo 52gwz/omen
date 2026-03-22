@@ -201,8 +201,6 @@ onMounted(() => {
 
 .welcome-input-area {
   padding: 12px 16px;
-  background: var(--c-base);
-  border-top: 1px solid var(--c-surface0);
   -webkit-app-region: no-drag;
 }
 

@@ -16,6 +16,9 @@
   /* --- Light theme (default) --- */
   --c-base: #f7f7f7;
   --c-mantle: #efefef;
+  --c-chrome-bg: rgb(250, 250, 250);
+  --c-chrome-hover-bg: rgb(242, 242, 242);
+  --c-chrome-selected-bg: color-mix(in srgb, var(--c-chrome-bg) 82%, var(--c-surface0) 18%);
   --c-surface0: #e4e4e4;
   --c-surface1: #bcc0cc;
   --c-surface2: #acb0be;
@@ -70,6 +73,9 @@
 
   --c-base: #1e1e2e;
   --c-mantle: #181825;
+  --c-chrome-bg: var(--c-mantle);
+  --c-chrome-hover-bg: var(--c-surface-hover);
+  --c-chrome-selected-bg: color-mix(in srgb, var(--c-surface0) 55%, var(--c-surface1) 45%);
   --c-surface0: #313244;
   --c-surface1: #45475a;
   --c-surface2: #585b70;

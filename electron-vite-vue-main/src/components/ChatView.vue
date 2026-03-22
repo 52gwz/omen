@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, inject, type Ref } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, inject, toRef, type Ref } from 'vue'
 import { marked } from 'marked'
 import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
@@ -63,9 +63,24 @@ function renderReasoning(raw: string): string {
 
 type ChatMode = 'chat' | 'agent'
 
-const messages = reactive<ChatMessage[]>([])
+const globalConvState = inject<Record<string, any>>('globalConvState')!
+
+function ensureConvState() {
+  if (!globalConvState[props.conversationId]) {
+    globalConvState[props.conversationId] = {
+      messages: [],
+      currentRequestId: '',
+      isStreaming: false,
+      streamChatMode: undefined as ChatMode | undefined,
+    }
+  }
+  return globalConvState[props.conversationId]
+}
+
+const convState = ensureConvState()
+const messages: ChatMessage[] = convState.messages
+const isStreaming = toRef(convState, 'isStreaming')
 const inputText = ref('')
-const isStreaming = ref(false)
 const currentModel = ref('')
 const activeProviderId = ref('')
 const providers = ref<ModelProvider[]>([])
@@ -96,7 +111,6 @@ function scrollReasoningToBottom(idx: number) {
   })
 }
 
-let currentRequestId = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadMessagesPromise: Promise<void> | null = null
 
@@ -346,6 +360,10 @@ async function changeCwd() {
 }
 
 async function loadMessages() {
+  if (messages.length > 0) {
+    scrollToBottom(true)
+    return
+  }
   const stored = await window.conversationApi.getMessages(props.conversationId)
   messages.length = 0
   for (const m of stored) {
@@ -424,7 +442,8 @@ function getLastAssistant(): ChatMessage | null {
 
 function sendChatMessage(text: string) {
   const requestId = crypto.randomUUID()
-  currentRequestId = requestId
+  convState.currentRequestId = requestId
+  convState.streamChatMode = 'chat'
   messages.push({ role: 'assistant', content: '', reasoning: '' })
   isStreaming.value = true
 
@@ -479,7 +498,8 @@ function sendChatMessage(text: string) {
 
 function sendAgentMessage(text: string) {
   const requestId = crypto.randomUUID()
-  currentRequestId = requestId
+  convState.currentRequestId = requestId
+  convState.streamChatMode = 'agent'
   messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [] })
   isStreaming.value = true
 
@@ -677,20 +697,22 @@ async function sendMessage() {
 }
 
 function stopGeneration() {
-  if (!isStreaming.value || !currentRequestId) return
-  if (chatMode.value === 'agent') {
-    window.agentChat.stop(currentRequestId)
+  const rid = convState.currentRequestId
+  if (!isStreaming.value || !rid) return
+  const mode = convState.streamChatMode || chatMode.value
+  if (mode === 'agent') {
+    window.agentChat.stop(rid)
   } else {
-    window.aiChat.stopStream(currentRequestId)
+    window.aiChat.stopStream(rid)
   }
 }
 
 function confirmTool(toolCallId: string) {
-  window.agentChat.confirmTool(currentRequestId, toolCallId)
+  window.agentChat.confirmTool(convState.currentRequestId, toolCallId)
 }
 
 function rejectTool(toolCallId: string) {
-  window.agentChat.rejectTool(currentRequestId, toolCallId)
+  window.agentChat.rejectTool(convState.currentRequestId, toolCallId)
 }
 
 function killCommand(toolCallId: string) {
@@ -824,22 +846,24 @@ watch(isStreaming, (val) => {
   emit('streamingChange', val)
 })
 
+watch(
+  () => {
+    const last = messages[messages.length - 1]
+    return last?.content?.length
+  },
+  () => {
+    if (isStreaming.value) scrollToBottom()
+  }
+)
+
 onMounted(() => {
   loadConfig()
   loadCwd()
   loadMessagesPromise = loadMessages()
   nextTick(() => composerRef.value?.focusInput())
+  emit('streamingChange', isStreaming.value)
 })
 
-onUnmounted(() => {
-  if (isStreaming.value && currentRequestId) {
-    if (chatMode.value === 'agent') {
-      window.agentChat.stop(currentRequestId)
-    } else {
-      window.aiChat.stopStream(currentRequestId)
-    }
-  }
-})
 
 async function sendWithContent(text: string, images?: string[], providerId?: string, model?: string, mode?: ChatMode) {
   if (loadMessagesPromise) await loadMessagesPromise
@@ -1658,7 +1682,6 @@ defineExpose({ loadConfig, sendWithContent })
 
 .input-area {
   padding: 12px 16px;
-  border-top: 1px solid var(--c-surface0);
 }
 
 .input-row {

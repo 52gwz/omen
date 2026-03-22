@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>品牌主题色选择</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e12;
+    --surface: #18181f;
+    --border: #2a2a35;
+    --text: #e8e8ed;
+    --text-dim: #8888a0;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans SC', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .hero {
+    text-align: center;
+    padding: 60px 20px 40px;
+    position: relative;
+  }
+
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--text-dim), transparent);
+  }
+
+  .hero h1 {
+    font-family: 'Playfair Display', serif;
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, #fff 0%, #aaa 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .hero p {
+    color: var(--text-dim);
+    font-size: 15px;
+    font-weight: 300;
+  }
+
+  .palettes {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 28px;
+  }
+
+  .palette-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: all 0.4s cubic-bezier(.25,.8,.25,1);
+    cursor: pointer;
+    position: relative;
+  }
+
+  .palette-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+    border-color: var(--accent, var(--border));
+  }
+
+  .palette-card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent), 0 20px 60px rgba(0,0,0,0.4);
+  }
+
+  .palette-card.selected::after {
+    content: '✓';
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 700;
+    z-index: 10;
+    animation: popIn 0.3s cubic-bezier(.175,.885,.32,1.275);
+  }
+
+  @keyframes popIn {
+    0% { transform: scale(0); }
+    100% { transform: scale(1); }
+  }
+
+  .color-strip {
+    display: flex;
+    height: 100px;
+  }
+
+  .color-strip > div {
+    flex: 1;
+    transition: flex 0.3s ease;
+    position: relative;
+  }
+
+  .palette-card:hover .color-strip > div:hover {
+    flex: 1.8;
+  }
+
+  .color-strip > div::after {
+    content: attr(data-hex);
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 0.2s;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+    white-space: nowrap;
+  }
+
+  .palette-card:hover .color-strip > div::after {
+    opacity: 1;
+  }
+
+  .palette-info {
+    padding: 20px 22px;
+  }
+
+  .palette-name {
+    font-size: 17px;
+    font-weight: 500;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .palette-tag {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.08);
+    color: var(--text-dim);
+    font-weight: 400;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .palette-desc {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-weight: 300;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+
+  .palette-preview {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .mini-btn {
+    padding: 7px 18px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .mini-btn.primary {
+    color: #fff;
+  }
+
+  .mini-btn.outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  .mini-dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+  }
+
+  .demo-section {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+
+  .demo-chat {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .demo-bubble {
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 12px;
+    max-width: 80%;
+    line-height: 1.5;
+  }
+
+  .demo-bubble.user {
+    align-self: flex-end;
+    color: #fff;
+  }
+
+  .demo-bubble.ai {
+    background: rgba(255,255,255,0.06);
+    color: var(--text-dim);
+    align-self: flex-start;
+  }
+
+  .footer {
+    text-align: center;
+    padding: 40px 20px 60px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  .selected-summary {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(14,14,18,0.95);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    padding: 16px 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transform: translateY(100%);
+    transition: transform 0.4s cubic-bezier(.25,.8,.25,1);
+    z-index: 100;
+  }
+
+  .selected-summary.show {
+    transform: translateY(0);
+  }
+
+  .selected-summary .info {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .selected-summary .color-dots {
+    display: flex;
+    gap: 4px;
+  }
+
+  .selected-summary .color-dots > span {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+  }
+
+  .selected-summary .name {
+    font-weight: 500;
+    font-size: 15px;
+  }
+
+  .confirm-btn {
+    padding: 10px 32px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    color: #fff;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .confirm-btn:hover {
+    transform: scale(1.05);
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Brand Palette</h1>
+  <p>为你的 AI 产品选择一套品牌主题色 · 点击卡片选择</p>
+</div>
+
+<div class="palettes" id="palettes"></div>
+
+<div class="selected-summary" id="summary">
+  <div class="info">
+    <div class="color-dots" id="summaryDots"></div>
+    <span class="name" id="summaryName"></span>
+  </div>
+  <button class="confirm-btn" id="confirmBtn">确认选择</button>
+</div>
+
+<script>
+const palettes = [
+  {
+    name: '极光紫',
+    tag: '科技感',
+    desc: '深邃神秘的紫色调，传达 AI 的智慧与前沿感，适合科技类产品',
+    colors: ['#6C3CE1', '#8B5CF6', '#A78BFA', '#C4B5FD', '#1a1625'],
+    accent: '#8B5CF6',
+  },
+  {
+    name: '星际蓝',
+    tag: '专业',
+    desc: '经典深蓝色系，稳重可靠，传达信任感与专业度',
+    colors: ['#1E40AF', '#3B82F6', '#60A5FA', '#93C5FD', '#0f172a'],
+    accent: '#3B82F6',
+  },
+  {
+    name: '翡翠绿',
+    tag: '清新',
+    desc: '自然生机的绿色，象征成长与和谐，适合效率工具类产品',
+    colors: ['#059669', '#10B981', '#34D399', '#6EE7B7', '#0d1f17'],
+    accent: '#10B981',
+  },
+  {
+    name: '琥珀橙',
+    tag: '活力',
+    desc: '温暖明亮的橙色调，充满能量与创造力，适合创意类产品',
+    colors: ['#D97706', '#F59E0B', '#FBBF24', '#FDE68A', '#1a1408'],
+    accent: '#F59E0B',
+  },
+  {
+    name: '玫瑰粉',
+    tag: '温柔',
+    desc: '优雅柔和的粉色，传达关怀与亲和力，适合生活方式类产品',
+    colors: ['#DB2777', '#EC4899', '#F472B6', '#FBCFE8', '#1f0a15'],
+    accent: '#EC4899',
+  },
+  {
+    name: '赤焰红',
+    tag: '力量',
+    desc: '强烈醒目的红色系，激情与果断并存，适合高效执行类工具',
+    colors: ['#DC2626', '#EF4444', '#F87171', '#FCA5A5', '#1a0c0c'],
+    accent: '#EF4444',
+  },
+  {
+    name: '深空灰',
+    tag: '极简',
+    desc: '高级灰色调，低调内敛，让内容成为主角，适合专注型产品',
+    colors: ['#374151', '#6B7280', '#9CA3AF', '#D1D5DB', '#111318'],
+    accent: '#6B7280',
+  },
+  {
+    name: '薄荷青',
+    tag: '未来',
+    desc: '清凉通透的青绿色，科幻感与清新感兼具，适合创新型产品',
+    colors: ['#0891B2', '#06B6D4', '#22D3EE', '#67E8F9', '#0a1a1e'],
+    accent: '#06B6D4',
+  },
+  {
+    name: '熔岩橘',
+    tag: '大胆',
+    desc: '浓烈饱和的橘红渐变，前卫张扬，适合面向年轻群体的产品',
+    colors: ['#EA580C', '#F97316', '#FB923C', '#FDBA74', '#1a1008'],
+    accent: '#F97316',
+  },
+  {
+    name: '靛蓝',
+    tag: '沉稳',
+    desc: '深沉的靛青色系，介于蓝紫之间，兼具理性与感性',
+    colors: ['#4338CA', '#6366F1', '#818CF8', '#A5B4FC', '#13122a'],
+    accent: '#6366F1',
+  },
+  {
+    name: '鎏金',
+    tag: '奢华',
+    desc: '典雅金色调，传达品质感与尊贵气息，适合高端定位产品',
+    colors: ['#A16207', '#CA8A04', '#EAB308', '#FDE047', '#1a1606'],
+    accent: '#CA8A04',
+  },
+  {
+    name: '森林',
+    tag: '自然',
+    desc: '深沉的墨绿色调，沉静有力量感，适合注重可持续性的品牌',
+    colors: ['#166534', '#16A34A', '#4ADE80', '#86EFAC', '#0a1a0e'],
+    accent: '#16A34A',
+  },
+];
+
+const container = document.getElementById('palettes');
+let selectedIdx = null;
+
+palettes.forEach((p, idx) => {
+  const card = document.createElement('div');
+  card.className = 'palette-card';
+  card.style.setProperty('--accent', p.accent);
+  card.dataset.idx = idx;
+
+  const stripHTML = p.colors.slice(0, 4).map(c =>
+    `<div style="background:${c}" data-hex="${c}"></div>`
+  ).join('');
+
+  card.innerHTML = `
+    <div class="color-strip">${stripHTML}</div>
+    <div class="palette-info">
+      <div class="palette-name">${p.name} <span class="palette-tag">${p.tag}</span></div>
+      <div class="palette-desc">${p.desc}</div>
+      <div class="palette-preview">
+        <button class="mini-btn primary" style="background:${p.accent}">主按钮</button>
+        <button class="mini-btn outline" style="border-color:${p.accent};color:${p.accent}">次按钮</button>
+        <div class="mini-dot" style="background:${p.accent};border-color:${p.accent}"></div>
+      </div>
+      <div class="demo-section">
+        <div class="demo-chat">
+          <div class="demo-bubble user" style="background:${p.accent}">帮我写一段产品介绍</div>
+          <div class="demo-bubble ai">好的，我来为你生成一段精彩的产品介绍文案...</div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  card.addEventListener('click', () => selectPalette(idx));
+  container.appendChild(card);
+});
+
+function selectPalette(idx) {
+  const cards = document.querySelectorAll('.palette-card');
+  cards.forEach(c => c.classList.remove('selected'));
+
+  if (selectedIdx === idx) {
+    selectedIdx = null;
+    document.getElementById('summary').classList.remove('show');
+    return;
+  }
+
+  selectedIdx = idx;
+  cards[idx].classList.add('selected');
+
+  const p = palettes[idx];
+  const dotsHTML = p.colors.slice(0, 4).map(c =>
+    `<span style="background:${c}"></span>`
+  ).join('');
+
+  document.getElementById('summaryDots').innerHTML = dotsHTML;
+  document.getElementById('summaryName').textContent = p.name;
+  document.getElementById('confirmBtn').style.background = p.accent;
+  document.getElementById('summary').classList.add('show');
+}
+
+document.getElementById('confirmBtn').addEventListener('click', () => {
+  if (selectedIdx !== null) {
+    const p = palettes[selectedIdx];
+    const cssVars = `
+--color-primary-700: ${p.colors[0]};
+--color-primary-500: ${p.colors[1]};
+--color-primary-400: ${p.colors[2]};
+--color-primary-200: ${p.colors[3]};
+--color-primary-bg: ${p.colors[4]};
+    `.trim();
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);
+      display:flex;align-items:center;justify-content:center;z-index:200;
+      animation:fadeIn 0.3s ease;
+    `;
+    overlay.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;
+        padding:32px;max-width:480px;width:90%;text-align:center;">
+        <div style="font-size:40px;margin-bottom:12px;">🎨</div>
+        <h2 style="font-size:20px;margin-bottom:8px;">已选择「${p.name}」</h2>
+        <p style="color:var(--text-dim);font-size:13px;margin-bottom:20px;">以下是 CSS 变量，可直接复制使用</p>
+        <pre style="background:rgba(0,0,0,0.3);border-radius:10px;padding:16px;
+          text-align:left;font-size:13px;line-height:1.8;overflow-x:auto;
+          color:${p.accent};margin-bottom:20px;">${cssVars}</pre>
+        <button onclick="this.parentElement.parentElement.remove()" 
+          style="padding:10px 28px;border-radius:10px;border:none;background:${p.accent};
+          color:#fff;font-size:14px;cursor:pointer;">关闭</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+});
+
+document.querySelectorAll('.palette-card').forEach((card, i) => {
+  card.style.opacity = '0';
+  card.style.transform = 'translateY(30px)';
+  setTimeout(() => {
+    card.style.transition = 'all 0.5s cubic-bezier(.25,.8,.25,1)';
+    card.style.opacity = '1';
+    card.style.transform = 'translateY(0)';
+  }, i * 80);
+});
+</script>
+</body>
+</html>

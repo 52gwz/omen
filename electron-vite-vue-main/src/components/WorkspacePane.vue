@@ -541,7 +541,6 @@ onBeforeUnmount(() => {
     @mousedown="emit('focusPane', node.pane.id)"
   >
     <div class="tab-bar">
-      <div class="tab-bar-drag"></div>
       <div class="tab-bar-content">
         <button
           v-if="canScrollLeft"
@@ -819,26 +818,23 @@ onBeforeUnmount(() => {
 
 .tab-bar {
   flex-shrink: 0;
-  border-bottom: 1px solid var(--c-surface0);
+  border-bottom: 1px solid color-mix(in srgb, var(--c-surface1) 55%, var(--c-mantle));
   background: var(--c-mantle);
   -webkit-app-region: drag;
 }
 
-.tab-bar-drag {
-  height: 12px;
-}
-
 .tab-bar-content {
   display: flex;
-  align-items: center;
-  padding: 0 8px 6px;
-  gap: 2px;
+  align-items: stretch;
+  padding: 0;
+  gap: 0;
+  min-height: 35px;
 }
 
 .tabs-scroll {
   display: flex;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
+  gap: 0;
   flex: 1;
   overflow-x: auto;
   min-width: 0;
@@ -871,54 +867,67 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 24px;
-  border-radius: 5px;
+  width: 22px;
+  height: 26px;
+  align-self: center;
+  border-radius: 2px;
   border: none;
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.12s, background 0.12s;
   -webkit-app-region: no-drag;
 }
 
 .tab-scroll-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface0);
+  background: color-mix(in srgb, var(--c-text) 8%, transparent);
 }
 
 .tab-item {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
-  border-radius: 7px;
+  padding: 0 10px;
+  min-height: 35px;
+  border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
-  font-size: 0.8rem;
-  color: var(--c-subtext0);
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-size: 13px;
+  line-height: 1.3;
+  color: color-mix(in srgb, var(--c-subtext0) 92%, var(--c-mantle));
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   flex-shrink: 0;
   user-select: none;
-  border: 1px solid transparent;
+  border: none;
+  border-top: 1px solid transparent;
+  border-right: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
+  box-sizing: border-box;
   -webkit-app-region: no-drag;
   position: relative;
+  z-index: 0;
 }
 
-.tab-item:hover {
-  background: var(--c-surface0);
+.tab-item:hover:not(.active) {
+  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
   color: var(--c-text);
 }
 
 .tab-item.active {
   background: var(--c-base);
   color: var(--c-text);
-  font-weight: 500;
+  font-weight: 400;
+  border-top: 1px solid var(--c-blue);
+  margin-bottom: -1px;
+  padding-bottom: 1px;
+  z-index: 1;
+  box-shadow: 0 1px 0 var(--c-base);
 }
 
 :root:not([data-theme="dark"]) .tab-item.active {
   background: #ffffff;
+  box-shadow: 0 1px 0 #ffffff;
 }
 
 .home-tab svg,
@@ -965,24 +974,25 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 2px;
   border: none;
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 
-.tab-item:hover .tab-close-btn {
+.tab-item:hover .tab-close-btn,
+.tab-item.active .tab-close-btn {
   opacity: 1;
 }
 
 .tab-close-btn:hover {
-  background: var(--c-surface1);
+  background: color-mix(in srgb, var(--c-text) 12%, transparent);
   color: var(--c-text);
 }
 
@@ -1010,26 +1020,28 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 28px;
+  min-height: 35px;
+  border-radius: 0;
   border: none;
+  border-left: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  align-self: stretch;
+  transition: color 0.12s, background 0.12s;
   -webkit-app-region: no-drag;
 }
 
 .tab-add-btn:hover {
-  color: var(--c-blue);
-  background: var(--c-surface0);
+  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
 }
 
 /* 内联模式：跟随在最后一个 tab 后面 */
 .tab-add-btn.inline {
-  margin-left: 2px;
+  margin-left: 0;
 }
 
 /* 固定模式：固定在右侧 */
@@ -1041,21 +1053,23 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 28px;
+  min-height: 35px;
+  border-radius: 0;
   border: none;
+  border-left: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  align-self: stretch;
+  transition: color 0.12s, background 0.12s;
   -webkit-app-region: no-drag;
 }
 
 .tab-browser-btn:hover {
   color: var(--c-teal, #179299);
-  background: var(--c-surface0);
+  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
 }
 
 .tab-list-wrapper {
@@ -1068,20 +1082,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 28px;
+  min-height: 35px;
+  border-radius: 0;
   border: none;
+  border-left: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
+  align-self: stretch;
+  transition: color 0.12s, background 0.12s;
 }
 
 .tab-list-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface0);
+  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
 }
 
 .tab-list-dropdown {
@@ -1160,8 +1176,8 @@ onBeforeUnmount(() => {
 .tab-item.insert-after::after {
   content: '';
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 6px;
+  bottom: 6px;
   width: 2px;
   background: var(--c-blue);
   border-radius: 1px;

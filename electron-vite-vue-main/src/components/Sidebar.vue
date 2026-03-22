@@ -414,32 +414,24 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 <template>
   <div class="sidebar" :class="{ 'sidebar-collapsed': collapsed, resizing: isResizing }" :style="{ width: actualWidth + 'px', minWidth: actualWidth + 'px' }">
-    <div v-show="!collapsed" class="sidebar-header">
-      <!-- 项目模式 -->
-      <template v-if="projectId">
-        <button class="back-btn" title="返回" @click="emit('closeProject')">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6" />
-          </svg>
-        </button>
-        <div class="sidebar-project-title" @click="!editingProjectName && startEditProjectName()">
-          <input
-            v-if="editingProjectName"
-            ref="editProjectNameInput"
-            v-model="editProjectNameValue"
-            class="project-name-input"
-            @blur="confirmEditProjectName"
-            @keydown="onEditProjectNameKeydown"
-            @click.stop
-          />
-          <span v-else class="sidebar-title editable">{{ projectName || '项目' }}</span>
-        </div>
-      </template>
-      <!-- 普通模式 -->
-      <template v-else>
-        <span class="sidebar-title">Omen</span>
-      </template>
-
+    <div v-show="!collapsed && projectId" class="sidebar-header">
+      <button class="back-btn" title="返回" @click="emit('closeProject')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6" />
+        </svg>
+      </button>
+      <div class="sidebar-project-title" @click="!editingProjectName && startEditProjectName()">
+        <input
+          v-if="editingProjectName"
+          ref="editProjectNameInput"
+          v-model="editProjectNameValue"
+          class="project-name-input"
+          @blur="confirmEditProjectName"
+          @keydown="onEditProjectNameKeydown"
+          @click.stop
+        />
+        <span v-else class="sidebar-title editable">{{ projectName || '项目' }}</span>
+      </div>
     </div>
 
     <div v-show="!collapsed" class="sidebar-body">
@@ -653,7 +645,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 <style scoped>
 .sidebar {
   height: 100%;
-  background: var(--c-mantle);
+  background: var(--c-chrome-bg);
   border-right: 1px solid var(--c-surface0);
   display: flex;
   flex-direction: column;
@@ -728,7 +720,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 .back-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 
 .sidebar-project-title {
@@ -746,7 +738,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .sidebar-project-title:hover {
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 
 .sidebar-project-title svg {
@@ -812,7 +804,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .new-chat-btn:hover {
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
   color: var(--c-text);
   border-color: var(--c-overlay0);
 }
@@ -840,7 +832,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .section-header:hover {
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 
 .section-header-left {
@@ -897,7 +889,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 .section-action-btn:hover {
   color: var(--c-text);
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 
 .new-item-row {
@@ -940,7 +932,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .project-item:hover {
-  background: var(--c-base);
+  background: var(--c-chrome-hover-bg);
 }
 
 .project-item svg {
@@ -1004,11 +996,11 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .conversation-item:hover {
-  background: var(--c-base);
+  background: var(--c-chrome-hover-bg);
 }
 
 .conversation-item.active {
-  background: var(--c-surface0);
+  background: var(--c-chrome-selected-bg);
 }
 
 .conversation-item svg {
@@ -1095,7 +1087,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .skills-btn:hover {
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
   color: var(--c-text);
 }
 
@@ -1132,6 +1124,6 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 }
 
 .ctx-menu button:hover {
-  background: var(--c-surface0);
+  background: var(--c-chrome-hover-bg);
 }
 </style>
