@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import { toolDefinitions, executeTool, type ToolExecOptions } from './tools'
 import { buildSystemPrompt, buildUserInfoBlock, buildSkillsBlock, buildOpenTabsBlock } from './system-prompt'
 import { loadSkills } from './skills'
+import { createTracker } from './file-change-tracker'
 
 type MessageContent =
   | string
@@ -290,6 +291,8 @@ function waitForConfirmation(requestId: string, toolCallId: string, signal?: Abo
 export async function runAgentLoop(params: AgentRunParams) {
   const { requestId, model, apiKey, baseURL, cwd, sender, maxIterations, autoApproveAll, signal, disabledSkills = [], tabContext } = params
 
+  const tracker = createTracker(requestId)
+
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter(s => s.enabled)
 
@@ -349,7 +352,9 @@ export async function runAgentLoop(params: AgentRunParams) {
     const result = await streamOnce({ allMessages, model, apiKey, baseURL, requestId, sender, signal })
 
     if (result.toolCalls.length === 0) {
-      // No tool calls - normal text response, done
+      if (tracker.hasChanges()) {
+        sender.send('agent:file-changes', { requestId, files: tracker.getChangedFilesInfo() })
+      }
       sender.send('agent:done', { requestId })
       return
     }
@@ -457,6 +462,7 @@ export async function runAgentLoop(params: AgentRunParams) {
       const execOptions: ToolExecOptions = {
         signal,
         toolCallId: tc.id,
+        changeTracker: tracker,
         onOutput: (chunk) => {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },
@@ -482,6 +488,9 @@ export async function runAgentLoop(params: AgentRunParams) {
   }
 
   // Hit max iterations
+  if (tracker.hasChanges()) {
+    sender.send('agent:file-changes', { requestId, files: tracker.getChangedFilesInfo() })
+  }
   sender.send('agent:error', { requestId, message: `Agent 已达到最大迭代次数 (${maxIterations})` })
   sender.send('agent:done', { requestId })
 }

@@ -709,6 +709,8 @@ function onSplitResizeEnd() {
 
 const webviewCurrentUrls = reactive<Record<string, string>>({})
 
+const fileHighlights = reactive(new Map<string, { ranges: { startLine: number; endLine: number }[]; deletions: { afterLine: number; count: number; lines: string[] }[] }>())
+
 const codeRefStore = reactive(new Map<string, CodeReference>())
 
 const pendingFileReferences = reactive<FileReference[]>([])
@@ -818,6 +820,7 @@ provide('setWebviewCurrentUrl', setWebviewCurrentUrl)
 provide('webviewCurrentUrls', webviewCurrentUrls)
 provide('addCodeReference', addCodeReference)
 provide('codeRefStore', codeRefStore)
+provide('fileHighlights', fileHighlights)
 provide('pendingFileReferences', pendingFileReferences)
 provide('addFileReferences', addFileReferences)
 provide('removeFileReference', removeFileReference)

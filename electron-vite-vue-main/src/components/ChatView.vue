@@ -43,6 +43,9 @@ interface ChatMessage {
   images?: string[]
   toolCalls?: ToolCallInfo[]
   planSteps?: PlanStep[]
+  fileChanges?: { filePath: string; deleted: boolean }[]
+  changesUndone?: boolean
+  agentRequestId?: string
 }
 
 function renderMarkdown(raw: string): string {
@@ -130,6 +133,7 @@ const clearCodeReferences = inject<() => void>('clearCodeReferences', () => {})
 const pendingFileReferences = inject<FileReference[]>('pendingFileReferences', [])
 const addFileReferences = inject<(refs: FileReference[]) => void>('addFileReferences', () => {})
 const clearFileReferences = inject<() => void>('clearFileReferences', () => {})
+const fileHighlights = inject<Map<string, { ranges: { startLine: number; endLine: number }[]; deletions: { afterLine: number; count: number; lines: string[] }[] }>>('fileHighlights', new Map())
 
 function toRelativePath(cwd: string, filePath: string): string {
   const base = cwd.endsWith('/') ? cwd : cwd + '/'
@@ -381,6 +385,15 @@ async function loadMessages() {
     if ((m as any).planSteps?.length) {
       msg.planSteps = (m as any).planSteps
     }
+    if ((m as any).fileChanges?.length) {
+      msg.fileChanges = (m as any).fileChanges
+    }
+    if ((m as any).changesUndone != null) {
+      msg.changesUndone = (m as any).changesUndone
+    }
+    if ((m as any).agentRequestId) {
+      msg.agentRequestId = (m as any).agentRequestId
+    }
     messages.push(msg)
   }
   scrollToBottom(true)
@@ -404,6 +417,15 @@ function scheduleSave() {
       }
       if (m.planSteps?.length) {
         (stored as any).planSteps = m.planSteps
+      }
+      if (m.fileChanges?.length) {
+        (stored as any).fileChanges = m.fileChanges
+      }
+      if (m.changesUndone != null) {
+        (stored as any).changesUndone = m.changesUndone
+      }
+      if (m.agentRequestId) {
+        (stored as any).agentRequestId = m.agentRequestId
       }
       return stored
     })
@@ -496,7 +518,7 @@ function sendAgentMessage(text: string) {
   const requestId = crypto.randomUUID()
   convState.currentRequestId = requestId
   convState.streamChatMode = 'agent'
-  messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [] })
+  messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
   isStreaming.value = true
 
   const historyMessages: ApiMessage[] = messages.slice(0, -1).map((m) => ({
@@ -607,8 +629,19 @@ function sendAgentMessage(text: string) {
 
   const offNewTurn = window.agentChat.onNewTurn(({ requestId: rid }) => {
     if (rid !== requestId) return
-    messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [] })
+    messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
     scrollToBottom()
+  })
+
+  const offFileChanges = window.agentChat.onFileChanges(({ requestId: rid, files }) => {
+    if (rid !== requestId) return
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].agentRequestId === requestId && messages[i].role === 'assistant') {
+        messages[i].fileChanges = files
+        break
+      }
+    }
+    applyHighlights(requestId)
   })
 
   const offDone = window.agentChat.onDone(({ requestId: rid }) => {
@@ -640,6 +673,7 @@ function sendAgentMessage(text: string) {
     offToolResult()
     offPlanUpdate()
     offNewTurn()
+    offFileChanges()
     offDone()
     offError()
   }
@@ -713,6 +747,43 @@ function rejectTool(toolCallId: string) {
 
 function killCommand(toolCallId: string) {
   window.agentChat.killCommand(toolCallId)
+}
+
+async function undoChanges(msg: ChatMessage) {
+  if (!msg.agentRequestId) return
+  const result = await window.agentChat.undoChanges(msg.agentRequestId)
+  if (!result.error) {
+    msg.changesUndone = true
+    for (const f of msg.fileChanges || []) fileHighlights.delete(f.filePath)
+  }
+  scheduleSave()
+}
+
+async function reapplyChanges(msg: ChatMessage) {
+  if (!msg.agentRequestId) return
+  const result = await window.agentChat.reapplyChanges(msg.agentRequestId)
+  if (!result.error) {
+    msg.changesUndone = false
+    await applyHighlights(msg.agentRequestId)
+  }
+  scheduleSave()
+}
+
+async function applyHighlights(requestId: string) {
+  const changedLines = await window.agentChat.getChangedLines(requestId)
+  for (const item of changedLines) {
+    if (item.fileDeleted) continue
+    fileHighlights.set(item.filePath, { ranges: item.ranges, deletions: item.deletions })
+  }
+}
+
+function openChangedFile(filePath: string) {
+  openTabById('__editor__:' + filePath)
+}
+
+function shortFileName(filePath: string): string {
+  const rel = toRelativePath(agentCwd.value, filePath)
+  return rel
 }
 
 const copiedMsgIndex = ref<number | null>(null)
@@ -974,6 +1045,50 @@ defineExpose({ loadConfig, sendWithContent })
 
           <!-- Streaming cursor -->
           <span v-if="msg.role === 'assistant' && isStreaming && i === messages.length - 1 && !msg.toolCalls?.some(t => t.status === 'streaming' || t.status === 'pending' || t.status === 'running')" class="cursor-blink">▍</span>
+
+          <!-- Undo / Reapply bar -->
+          <div v-if="msg.role === 'assistant' && msg.fileChanges?.length && !isStreaming" class="change-actions">
+            <div class="change-header">
+              <span class="change-label">{{ msg.fileChanges.length }} 个文件已修改</span>
+              <div class="change-btns">
+                <button v-if="!msg.changesUndone" class="change-btn undo" @click="undoChanges(msg)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="1 4 1 10 7 10"/>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                  </svg>
+                  撤销
+                </button>
+                <button v-if="msg.changesUndone" class="change-btn reapply" @click="reapplyChanges(msg)">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"/>
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                  </svg>
+                  重新应用
+                </button>
+              </div>
+            </div>
+            <div class="change-file-list">
+              <button
+                v-for="f in msg.fileChanges"
+                :key="f.filePath"
+                class="change-file-chip"
+                :class="{ undone: msg.changesUndone, deleted: f.deleted }"
+                @click="!f.deleted && openChangedFile(f.filePath)"
+                :title="f.filePath"
+              >
+                <svg v-if="f.deleted" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                <svg v-else width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                  <polyline points="14 2 14 8 20 8"/>
+                </svg>
+                <span class="change-file-name">{{ shortFileName(f.filePath) }}</span>
+                <span v-if="f.deleted" class="change-file-badge">已删除</span>
+              </button>
+            </div>
+          </div>
 
           <!-- Hover action buttons（仅用户消息可复制 / 编辑） -->
           <div class="msg-actions" v-if="msg.role === 'user' && (!isStreaming || i !== messages.length - 1)">
@@ -1708,6 +1823,137 @@ defineExpose({ loadConfig, sendWithContent })
 
 .plan-step-text {
   line-height: 1.4;
+}
+
+/* Undo / Reapply change actions */
+.change-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--c-mantle);
+  border: 1px solid var(--c-surface0);
+  font-size: 0.82rem;
+}
+
+.change-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.change-label {
+  color: var(--c-subtext0);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.change-btns {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.change-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--c-surface1);
+  background: var(--c-base);
+  color: var(--c-subtext0);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.change-btn:hover {
+  border-color: var(--c-overlay0);
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.change-btn.undo:hover {
+  border-color: var(--c-peach, #fe640b);
+  color: var(--c-peach, #fe640b);
+}
+
+.change-btn.reapply:hover {
+  border-color: var(--c-green, #40a02b);
+  color: var(--c-green, #40a02b);
+}
+
+.change-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.change-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--c-surface1);
+  background: var(--c-base);
+  color: var(--c-subtext0);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+  max-width: 260px;
+}
+
+.change-file-chip svg {
+  flex-shrink: 0;
+  color: var(--c-blue);
+}
+
+.change-file-chip:hover {
+  border-color: var(--c-blue);
+  color: var(--c-text);
+  background: var(--c-surface0);
+}
+
+.change-file-chip.undone {
+  opacity: 0.5;
+}
+
+.change-file-chip.undone .change-file-name {
+  text-decoration: line-through;
+}
+
+.change-file-chip.deleted {
+  cursor: default;
+}
+
+.change-file-chip.deleted svg {
+  color: var(--c-red, #d20f39);
+}
+
+.change-file-chip.deleted:hover {
+  border-color: var(--c-red, #d20f39);
+}
+
+.change-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-file-badge {
+  flex-shrink: 0;
+  font-size: 0.65rem;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--c-red, #d20f39) 15%, transparent);
+  color: var(--c-red, #d20f39);
+  line-height: 1.5;
 }
 </style>
 

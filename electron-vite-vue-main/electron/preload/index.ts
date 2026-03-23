@@ -85,6 +85,15 @@ contextBridge.exposeInMainWorld('agentChat', {
   killCommand(toolCallId: string) {
     ipcRenderer.send('agent:kill-command', { toolCallId })
   },
+  undoChanges(requestId: string): Promise<{ files?: string[]; error?: string }> {
+    return ipcRenderer.invoke('agent:undo-changes', requestId)
+  },
+  reapplyChanges(requestId: string): Promise<{ files?: string[]; error?: string }> {
+    return ipcRenderer.invoke('agent:reapply-changes', requestId)
+  },
+  getChangedLines(requestId: string): Promise<{ filePath: string; ranges: { startLine: number; endLine: number }[] }[]> {
+    return ipcRenderer.invoke('agent:get-changed-lines', requestId)
+  },
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void) {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:stream-chunk', handler)
@@ -139,6 +148,11 @@ contextBridge.exposeInMainWorld('agentChat', {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on('agent:plan-update', handler)
     return () => { ipcRenderer.off('agent:plan-update', handler) }
+  },
+  onFileChanges(callback: (data: { requestId: string; files: string[] }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:file-changes', handler)
+    return () => { ipcRenderer.off('agent:file-changes', handler) }
   },
 })
 
@@ -245,6 +259,17 @@ contextBridge.exposeInMainWorld('fsApi', {
     const handler = (_: any, data: { dirPath: string }) => callback(data)
     ipcRenderer.on('fs:dir-changed', handler)
     return () => { ipcRenderer.off('fs:dir-changed', handler) }
+  },
+  watchFile(filePath: string): Promise<{ resolvedPath: string } | { error: string }> {
+    return ipcRenderer.invoke('fs:watch-file', filePath)
+  },
+  unwatchFile(filePath: string): Promise<void> {
+    return ipcRenderer.invoke('fs:unwatch-file', filePath)
+  },
+  onFileChanged(callback: (data: { filePath: string }) => void): () => void {
+    const handler = (_: any, data: { filePath: string }) => callback(data)
+    ipcRenderer.on('fs:file-changed', handler)
+    return () => { ipcRenderer.off('fs:file-changed', handler) }
   },
   readFile(filePath: string): Promise<{ content: string; error?: string }> {
     return ipcRenderer.invoke('fs:read-file', filePath)

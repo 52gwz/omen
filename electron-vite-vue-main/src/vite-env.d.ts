@@ -43,6 +43,9 @@ interface AgentChatApi {
   confirmTool(requestId: string, toolCallId: string): void
   rejectTool(requestId: string, toolCallId: string): void
   killCommand(toolCallId: string): void
+  undoChanges(requestId: string): Promise<{ files?: string[]; error?: string }>
+  reapplyChanges(requestId: string): Promise<{ files?: string[]; error?: string }>
+  getChangedLines(requestId: string): Promise<{ filePath: string; ranges: { startLine: number; endLine: number }[]; deletions: { afterLine: number; count: number; lines: string[] }[]; fileDeleted?: boolean }[]>
   onStreamChunk(callback: (data: { requestId: string; delta: string }) => void): () => void
   onStreamReasoning(callback: (data: { requestId: string; delta: string }) => void): () => void
   onToolCallStreaming(callback: (data: { requestId: string; index: number; id: string; name: string; argumentsDelta: string }) => void): () => void
@@ -54,6 +57,7 @@ interface AgentChatApi {
   onDone(callback: (data: { requestId: string }) => void): () => void
   onError(callback: (data: { requestId: string; message: string }) => void): () => void
   onPlanUpdate(callback: (data: { requestId: string; toolCallId: string; explanation: string | null; plan: Array<{ step: string; status: string }> }) => void): () => void
+  onFileChanges(callback: (data: { requestId: string; files: { filePath: string; deleted: boolean }[] }) => void): () => void
 }
 
 interface DialogApi {
@@ -148,6 +152,9 @@ interface FsApi {
   watchDir(dirPath: string): Promise<void>
   unwatchDir(dirPath: string): Promise<void>
   onDirChanged(callback: (data: { dirPath: string }) => void): () => void
+  watchFile(filePath: string): Promise<{ resolvedPath: string } | { error: string }>
+  unwatchFile(filePath: string): Promise<void>
+  onFileChanged(callback: (data: { filePath: string }) => void): () => void
   readFile(filePath: string): Promise<{ content: string; error?: string }>
   writeFile(filePath: string, content: string): Promise<{ error?: string }>
   createFile(filePath: string): Promise<{ error?: string }>

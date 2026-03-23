@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { FileChangeTracker } from './file-change-tracker'
 
 export interface ToolDefinition {
   type: 'function'
@@ -19,6 +20,7 @@ export interface ToolExecOptions {
   signal?: AbortSignal
   onOutput?: (chunk: string) => void
   toolCallId?: string
+  changeTracker?: FileChangeTracker
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -369,10 +371,13 @@ async function writeTool(
   filePath: string,
   content: string,
   cwd: string,
+  tracker?: FileChangeTracker,
 ): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
+  if (tracker) await tracker.recordBefore(resolved, 'write')
   await fs.mkdir(path.dirname(resolved), { recursive: true })
   await fs.writeFile(resolved, content, 'utf-8')
+  if (tracker) await tracker.recordAfter(resolved)
   return `已写入 ${resolved}`
 }
 
@@ -382,6 +387,7 @@ async function strReplaceTool(
   newString: string,
   replaceAll: boolean | undefined,
   cwd: string,
+  tracker?: FileChangeTracker,
 ): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
   const content = await fs.readFile(resolved, 'utf-8')
@@ -394,10 +400,16 @@ async function strReplaceTool(
     return `[error] 在文件中未找到 old_string。请检查内容是否完全匹配（包括空格和缩进）。`
   }
 
+  if (tracker) await tracker.recordBefore(resolved, 'replace')
+
   if (replaceAll) {
     const newContent = content.split(oldString).join(newString)
     const count = content.split(oldString).length - 1
     await fs.writeFile(resolved, newContent, 'utf-8')
+    if (tracker) {
+      tracker.addReplacement(resolved, oldString, newString, true)
+      await tracker.recordAfter(resolved)
+    }
     return `已替换 ${count} 处匹配`
   }
 
@@ -410,13 +422,19 @@ async function strReplaceTool(
 
   const newContent = content.slice(0, firstIdx) + newString + content.slice(firstIdx + oldString.length)
   await fs.writeFile(resolved, newContent, 'utf-8')
+  if (tracker) {
+    tracker.addReplacement(resolved, oldString, newString, false)
+    await tracker.recordAfter(resolved)
+  }
   return `已替换 1 处匹配`
 }
 
-async function deleteTool(filePath: string, cwd: string): Promise<string> {
+async function deleteTool(filePath: string, cwd: string, tracker?: FileChangeTracker): Promise<string> {
   const resolved = resolvePath(filePath, cwd)
   try {
+    if (tracker) await tracker.recordBefore(resolved, 'delete')
     await fs.unlink(resolved)
+    if (tracker) await tracker.recordAfter(resolved)
     return `已删除 ${resolved}`
   } catch {
     return `文件不存在或无法删除: ${resolved}`
@@ -537,11 +555,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       case 'Read':
         return text(await readTool(args.path as string, args.offset as number | undefined, args.limit as number | undefined, cwd))
       case 'Write':
-        return text(await writeTool(args.path as string, args.content as string, cwd))
+        return text(await writeTool(args.path as string, args.content as string, cwd, options?.changeTracker))
       case 'StrReplace':
-        return text(await strReplaceTool(args.path as string, args.old_string as string, args.new_string as string, args.replace_all as boolean | undefined, cwd))
+        return text(await strReplaceTool(args.path as string, args.old_string as string, args.new_string as string, args.replace_all as boolean | undefined, cwd, options?.changeTracker))
       case 'Delete':
-        return text(await deleteTool(args.path as string, cwd))
+        return text(await deleteTool(args.path as string, cwd, options?.changeTracker))
       case 'list_directory':
         return text(await listDirectory(args.path as string | undefined, cwd))
       case 'grep_search':

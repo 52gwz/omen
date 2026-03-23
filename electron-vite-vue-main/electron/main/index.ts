@@ -405,12 +405,31 @@ ipcMain.on('agent:kill-command', (_, data: { toolCallId: string }) => {
   console.log(`[Agent] kill command ${data.toolCallId.slice(0, 8)}: ${killed ? 'ok' : 'not found'}`)
 })
 
+ipcMain.handle('agent:undo-changes', async (_, requestId: string) => {
+  const tracker = getTracker(requestId)
+  if (!tracker) return { error: '未找到变更记录' }
+  return await tracker.undoAll()
+})
+
+ipcMain.handle('agent:reapply-changes', async (_, requestId: string) => {
+  const tracker = getTracker(requestId)
+  if (!tracker) return { error: '未找到变更记录' }
+  return await tracker.reapplyAll()
+})
+
+ipcMain.handle('agent:get-changed-lines', (_, requestId: string) => {
+  const tracker = getTracker(requestId)
+  if (!tracker) return []
+  return tracker.getChangedLineRanges()
+})
+
 // ---- Agent IPC Handlers ----
 
 import { runAgentLoop } from './agent/loop'
 import { killRunningCommand } from './agent/tools'
 import { loadSkills } from './agent/skills'
 import { buildSystemPrompt } from './agent/system-prompt'
+import { getTracker } from './agent/file-change-tracker'
 
 ipcMain.on('agent:start', async (event, payload: {
   requestId: string
@@ -840,5 +859,72 @@ ipcMain.handle('fs:unwatch-dir', (_event, dirPath: string) => {
   if (timer) {
     clearTimeout(timer)
     watchDebounceTimers.delete(dirPath)
+  }
+})
+
+// ---- Single-file watch (editor auto-reload) ----
+
+const fileWatchEntries = new Map<string, { count: number; watcher: fs.FSWatcher }>()
+const fileWatchDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function resolveFileWatchKey(filePath: string): string {
+  try {
+    return path.resolve(filePath)
+  } catch {
+    return filePath
+  }
+}
+
+ipcMain.handle('fs:watch-file', (_event, filePath: string): { resolvedPath: string } | { error: string } => {
+  const key = resolveFileWatchKey(filePath)
+  const existing = fileWatchEntries.get(key)
+  if (existing) {
+    existing.count += 1
+    return { resolvedPath: key }
+  }
+  try {
+    const watcher = fs.watch(key, (event) => {
+      if (event !== 'change' && event !== 'rename') return
+      const prev = fileWatchDebounceTimers.get(key)
+      if (prev) clearTimeout(prev)
+      fileWatchDebounceTimers.set(key, setTimeout(() => {
+        fileWatchDebounceTimers.delete(key)
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('fs:file-changed', { filePath: key })
+        }
+      }, 300))
+    })
+    watcher.on('error', () => {
+      const entry = fileWatchEntries.get(key)
+      if (entry) {
+        entry.watcher.close()
+        fileWatchEntries.delete(key)
+      }
+      const t = fileWatchDebounceTimers.get(key)
+      if (t) {
+        clearTimeout(t)
+        fileWatchDebounceTimers.delete(key)
+      }
+    })
+    fileWatchEntries.set(key, { count: 1, watcher })
+    return { resolvedPath: key }
+  } catch (e: any) {
+    return { error: e?.message || 'watch failed' }
+  }
+})
+
+ipcMain.handle('fs:unwatch-file', (_event, filePath: string) => {
+  const key = resolveFileWatchKey(filePath)
+  const entry = fileWatchEntries.get(key)
+  if (!entry) return
+  entry.count -= 1
+  if (entry.count <= 0) {
+    entry.watcher.close()
+    fileWatchEntries.delete(key)
+    const t = fileWatchDebounceTimers.get(key)
+    if (t) {
+      clearTimeout(t)
+      fileWatchDebounceTimers.delete(key)
+    }
   }
 })

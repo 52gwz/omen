@@ -26,6 +26,7 @@ const props = defineProps<{
 }>()
 
 const addCodeReference = inject<(ref: CodeReference) => void>('addCodeReference')
+const fileHighlights = inject<Map<string, { ranges: { startLine: number; endLine: number }[]; deletions: { afterLine: number; count: number; lines: string[] }[] }>>('fileHighlights', new Map())
 
 const { theme } = useTheme()
 const editorContainer = ref<HTMLDivElement>()
@@ -34,10 +35,17 @@ const loading = ref(true)
 const error = ref('')
 const modified = ref(false)
 const saving = ref(false)
+const diskStale = ref(false)
+let resolvedWatchKey = ''
+let suppressExternalReloadUntil = 0
+let externalReloadTimer: ReturnType<typeof setTimeout> | null = null
+let offFileChanged: (() => void) | null = null
 const viewMode = ref<'edit' | 'preview' | 'mindmap'>('edit')
 const rawContent = ref('')
 const showSelectionToolbar = ref(false)
 const toolbarPos = ref({ top: 0, left: 0 })
+let highlightDecorationIds: string[] = []
+let deletionViewZoneIds: string[] = []
 
 const toolbarStyle = computed(() => ({
   top: `${toolbarPos.value.top}px`,
@@ -126,10 +134,11 @@ function getMonacoTheme(t: string) {
   return t === 'dark' ? 'vs-dark' : 'vs'
 }
 
-async function loadFile() {
-  loading.value = true
+async function loadFile(opts?: { silent?: boolean }) {
+  const silent = opts?.silent ?? false
+  if (!silent) loading.value = true
   error.value = ''
-  modified.value = false
+  if (!silent) modified.value = false
 
   const result = await window.fsApi.readFile(props.filePath)
   loading.value = false
@@ -140,6 +149,7 @@ async function loadFile() {
   }
 
   rawContent.value = result.content
+  diskStale.value = false
   if (editor.value) {
     const model = editor.value.getModel()
     if (model) {
@@ -147,6 +157,7 @@ async function loadFile() {
       monaco.editor.setModelLanguage(model, getLang(props.filePath))
     }
     modified.value = false
+    updateHighlightDecorations()
   }
 }
 
@@ -160,12 +171,47 @@ async function saveFile() {
     error.value = result.error
   } else {
     modified.value = false
+    diskStale.value = false
+    suppressExternalReloadUntil = Date.now() + 600
   }
 }
 
-watch(() => props.filePath, () => {
+function clearExternalReloadTimer() {
+  if (externalReloadTimer) {
+    clearTimeout(externalReloadTimer)
+    externalReloadTimer = null
+  }
+}
+
+function scheduleExternalReload() {
+  clearExternalReloadTimer()
+  externalReloadTimer = setTimeout(() => {
+    externalReloadTimer = null
+    if (Date.now() < suppressExternalReloadUntil) return
+    if (modified.value) {
+      diskStale.value = true
+      return
+    }
+    void loadFile({ silent: true })
+  }, 200)
+}
+
+async function reloadFromDisk() {
+  diskStale.value = false
+  await loadFile()
+}
+
+function dismissDiskStale() {
+  diskStale.value = false
+}
+
+watch(() => props.filePath, async (newPath, oldPath) => {
   viewMode.value = 'edit'
-  loadFile()
+  clearExternalReloadTimer()
+  if (oldPath) await window.fsApi.unwatchFile(oldPath)
+  const wr = await window.fsApi.watchFile(newPath)
+  resolvedWatchKey = 'resolvedPath' in wr ? wr.resolvedPath : ''
+  await loadFile()
 })
 
 watch(theme, (t) => {
@@ -204,6 +250,18 @@ onMounted(() => {
     saveFile()
   })
 
+  offFileChanged = window.fsApi.onFileChanged((data) => {
+    if (data.filePath !== resolvedWatchKey) return
+    scheduleExternalReload()
+  })
+
+  void (async () => {
+    const wr = await window.fsApi.watchFile(props.filePath)
+    if ('resolvedPath' in wr) resolvedWatchKey = wr.resolvedPath
+    else resolvedWatchKey = ''
+    await loadFile()
+  })()
+
   editor.value.addAction({
     id: 'add-to-chat-reference',
     label: '引用到对话',
@@ -226,17 +284,116 @@ onMounted(() => {
       })
     },
   })
+})
 
-  loadFile()
+function clearDeletionViewZones() {
+  if (!editor.value || !deletionViewZoneIds.length) return
+  editor.value.changeViewZones(accessor => {
+    for (const id of deletionViewZoneIds) {
+      accessor.removeZone(id)
+    }
+  })
+  deletionViewZoneIds = []
+}
+
+function updateHighlightDecorations() {
+  if (!editor.value) return
+  const highlight = fileHighlights.get(props.filePath)
+
+  clearDeletionViewZones()
+
+  if (!highlight || (!highlight.ranges.length && !highlight.deletions.length)) {
+    highlightDecorationIds = editor.value.deltaDecorations(highlightDecorationIds, [])
+    return
+  }
+
+  const decorations: monaco.editor.IModelDeltaDecoration[] = []
+
+  for (const r of highlight.ranges) {
+    decorations.push({
+      range: new monaco.Range(r.startLine, 1, r.endLine, 1),
+      options: {
+        isWholeLine: true,
+        className: 'agent-changed-line',
+        overviewRuler: {
+          color: 'rgba(64, 160, 43, 0.6)',
+          position: monaco.editor.OverviewRulerLane.Left,
+        },
+        minimap: { color: 'rgba(64, 160, 43, 0.4)', position: monaco.editor.MinimapPosition.Inline },
+      },
+    })
+  }
+
+  for (const d of highlight.deletions) {
+    const line = Math.max(1, d.afterLine)
+    decorations.push({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        isWholeLine: true,
+        className: 'agent-deleted-line-marker',
+        overviewRuler: {
+          color: 'rgba(210, 15, 57, 0.6)',
+          position: monaco.editor.OverviewRulerLane.Left,
+        },
+      },
+    })
+  }
+
+  highlightDecorationIds = editor.value.deltaDecorations(highlightDecorationIds, decorations)
+
+  const ed = editor.value
+  ed.changeViewZones(accessor => {
+    for (const d of highlight.deletions) {
+      if (!d.lines.length) continue
+      const domNode = document.createElement('div')
+      domNode.className = 'agent-deleted-viewzone'
+      for (const lineText of d.lines) {
+        const lineEl = document.createElement('div')
+        lineEl.className = 'agent-deleted-viewzone-line'
+        lineEl.textContent = lineText || ' '
+        domNode.appendChild(lineEl)
+      }
+      const zoneId = accessor.addZone({
+        afterLineNumber: d.afterLine,
+        heightInLines: d.lines.length,
+        domNode,
+      })
+      deletionViewZoneIds.push(zoneId)
+    }
+  })
+}
+
+watch(
+  () => fileHighlights.get(props.filePath),
+  () => updateHighlightDecorations(),
+  { deep: true },
+)
+
+watch(() => props.filePath, () => {
+  clearDeletionViewZones()
+  highlightDecorationIds = []
+  updateHighlightDecorations()
 })
 
 onBeforeUnmount(() => {
+  clearDeletionViewZones()
+  clearExternalReloadTimer()
+  if (offFileChanged) {
+    offFileChanged()
+    offFileChanged = null
+  }
+  void window.fsApi.unwatchFile(props.filePath)
   editor.value?.dispose()
 })
 </script>
 
 <template>
   <div class="editor-panel">
+    <div v-if="diskStale" class="editor-disk-stale">
+      <span>磁盘上的文件已更新</span>
+      <button type="button" class="editor-disk-stale-btn" @click="reloadFromDisk">重新加载</button>
+      <button type="button" class="editor-disk-stale-dismiss" title="忽略" @click="dismissDiskStale">×</button>
+    </div>
     <div class="editor-header">
       <div class="editor-file-info">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -313,6 +470,40 @@ onBeforeUnmount(() => {
   </div>
 </template>
 
+<style>
+.agent-changed-line {
+  background: rgba(64, 160, 43, 0.12) !important;
+  border-left: 3px solid rgba(64, 160, 43, 0.6) !important;
+}
+
+.agent-deleted-line-marker {
+  border-bottom: 2px solid rgba(210, 15, 57, 0.5) !important;
+}
+
+.agent-deleted-glyph {
+  background: rgba(210, 15, 57, 0.7);
+  width: 3px !important;
+  margin-left: 3px;
+  border-radius: 1px;
+}
+
+.agent-deleted-viewzone {
+  background: rgba(210, 15, 57, 0.08);
+  border-left: 3px solid rgba(210, 15, 57, 0.5);
+  padding-left: 8px;
+  font-family: var(--vscode-editor-font-family, 'Menlo, Monaco, Courier New, monospace');
+  font-size: var(--vscode-editor-font-size, 13px);
+  line-height: var(--vscode-editor-line-height, 20px);
+}
+
+.agent-deleted-viewzone-line {
+  text-decoration: line-through;
+  color: rgba(210, 15, 57, 0.55);
+  white-space: pre;
+  overflow: hidden;
+}
+</style>
+
 <style scoped>
 .editor-panel {
   display: flex;
@@ -320,6 +511,54 @@ onBeforeUnmount(() => {
   height: 100%;
   min-width: 0;
   background: var(--c-base);
+}
+
+.editor-disk-stale {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--c-yellow, #df8e1d) 16%, var(--c-base));
+  color: var(--c-text);
+  border-bottom: 1px solid var(--c-surface0);
+}
+
+.editor-disk-stale-btn {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--c-surface0);
+  background: var(--c-mantle);
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: var(--c-text);
+}
+
+.editor-disk-stale-btn:hover {
+  background: var(--c-surface0);
+}
+
+.editor-disk-stale-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--c-overlay0);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.editor-disk-stale-dismiss:hover {
+  background: var(--c-surface0);
+  color: var(--c-text);
 }
 
 .editor-header {
