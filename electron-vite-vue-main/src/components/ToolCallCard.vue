@@ -18,6 +18,8 @@ const emit = defineEmits<{
   kill: []
 }>()
 
+const noAutoExpand = computed(() => props.name === 'Read' || props.name === 'list_directory')
+
 const expanded = ref(
   (props.name === 'Write' || props.name === 'StrReplace')
   && props.status !== 'streaming' && props.status !== 'pending'
@@ -32,7 +34,7 @@ function startTimer() {
   userToggled.value = false
   elapsedTimer = setInterval(() => {
     elapsedSeconds.value++
-    if (elapsedSeconds.value >= 1 && !expanded.value && !userToggled.value) {
+    if (elapsedSeconds.value >= 1 && !expanded.value && !userToggled.value && !noAutoExpand.value) {
       expanded.value = true
     }
   }, 1000)
@@ -53,7 +55,7 @@ const elapsedDisplay = computed(() => {
 })
 
 watch(() => props.status, (s, prev) => {
-  if (prev === 'streaming' && s !== 'streaming') {
+  if (prev === 'streaming' && s !== 'streaming' && !noAutoExpand.value) {
     expanded.value = true
   }
   if (s === 'running') startTimer()

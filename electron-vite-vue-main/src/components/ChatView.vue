@@ -962,7 +962,7 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference })
           <!-- Reasoning -->
           <div v-if="msg.reasoning" class="chat-reasoning">
             <button class="reasoning-toggle" @click="msg.reasoningExpanded = !msg.reasoningExpanded">
-              显示思路
+              正在思考
               <svg
                 class="reasoning-chevron"
                 :class="{ expanded: msg.reasoningExpanded }"
