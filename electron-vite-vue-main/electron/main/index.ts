@@ -428,7 +428,7 @@ ipcMain.handle('agent:get-changed-lines', (_, requestId: string) => {
 import { runAgentLoop } from './agent/loop'
 import { killRunningCommand } from './agent/tools'
 import { loadSkills } from './agent/skills'
-import { buildSystemPrompt } from './agent/system-prompt'
+import { buildSystemPrompt, buildUserInfoBlock, buildSkillsBlock, buildOpenTabsBlock } from './agent/system-prompt'
 import { getTracker } from './agent/file-change-tracker'
 
 ipcMain.on('agent:start', async (event, payload: {
@@ -641,7 +641,6 @@ ipcMain.handle('workspace:load', () => {
 })
 
 ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabContext?: string }) => {
-  const { buildUserInfoBlock, buildSkillsBlock, buildOpenTabsBlock } = await import('./agent/system-prompt')
   const disabledSkills: string[] = store.get('disabledSkills') || []
   const skills = await loadSkills(disabledSkills)
   const enabledSkills = skills.filter((s: any) => s.enabled)

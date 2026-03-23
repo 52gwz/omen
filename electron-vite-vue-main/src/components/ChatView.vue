@@ -429,7 +429,7 @@ function scheduleSave() {
       }
       return stored
     })
-    window.conversationApi.saveMessages(props.conversationId, toSave)
+    window.conversationApi.saveMessages(props.conversationId, JSON.parse(JSON.stringify(toSave)))
   }, 500)
 }
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
+import * as monaco from 'monaco-editor'
+import { useTheme } from '../composables/useTheme'
 
 const props = defineProps<{
   name: string
@@ -182,8 +184,11 @@ function renderMarkdown(raw: string): string {
   return marked.parse(raw, { async: false, breaks: true, gfm: true }) as string
 }
 
+const { theme } = useTheme()
 const isExecCommand = computed(() => props.name === 'exec_command')
-const isFileGenTool = computed(() => props.name === 'Write' || props.name === 'StrReplace')
+const isWriteTool = computed(() => props.name === 'Write')
+const isStrReplace = computed(() => props.name === 'StrReplace')
+const isFileGenTool = computed(() => isWriteTool.value || isStrReplace.value)
 
 function unescapePartialJson(s: string): string {
   let trimmed = s
@@ -235,6 +240,145 @@ watch(() => props.arguments, () => {
     })
   }
 })
+
+const EXT_LANG_MAP: Record<string, string> = {
+  ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+  json: 'json', html: 'html', htm: 'html', css: 'css', scss: 'scss', less: 'less',
+  vue: 'html', svelte: 'html', md: 'markdown', py: 'python', rb: 'ruby',
+  rs: 'rust', go: 'go', java: 'java', kt: 'kotlin', swift: 'swift',
+  c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
+  sh: 'shell', bash: 'shell', zsh: 'shell', fish: 'shell',
+  yml: 'yaml', yaml: 'yaml', toml: 'ini', xml: 'xml', svg: 'xml',
+  sql: 'sql', graphql: 'graphql', dockerfile: 'dockerfile',
+  makefile: 'makefile', lua: 'lua', php: 'php', r: 'r',
+}
+
+function getLangFromPath(fp: string): string {
+  const name = fp.split('/').pop()?.toLowerCase() || ''
+  if (name === 'dockerfile') return 'dockerfile'
+  if (name === 'makefile') return 'makefile'
+  const ext = name.split('.').pop() || ''
+  return EXT_LANG_MAP[ext] || 'plaintext'
+}
+
+const strReplaceInfo = computed(() => {
+  if (!isStrReplace.value) return null
+  try {
+    const obj = JSON.parse(props.arguments)
+    return {
+      path: obj.path || '',
+      oldString: obj.old_string ?? '',
+      newString: obj.new_string ?? '',
+    }
+  } catch {
+    const args = props.arguments
+    const pathMatch = args.match(/"path"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+    const oldMatch = /"old_string"\s*:\s*"/.exec(args)
+    const newMatch = /"new_string"\s*:\s*"/.exec(args)
+    const filePath = pathMatch ? pathMatch[1] : ''
+
+    let oldStr = ''
+    let newStr = ''
+    if (oldMatch) {
+      const raw = args.slice(oldMatch.index + oldMatch[0].length)
+      const endIdx = findUnescapedQuote(raw)
+      oldStr = unescapePartialJson(endIdx >= 0 ? raw.slice(0, endIdx) : raw)
+    }
+    if (newMatch) {
+      const raw = args.slice(newMatch.index + newMatch[0].length)
+      const endIdx = findUnescapedQuote(raw)
+      newStr = unescapePartialJson(endIdx >= 0 ? raw.slice(0, endIdx) : raw)
+    }
+    return { path: filePath, oldString: oldStr, newString: newStr }
+  }
+})
+
+function findUnescapedQuote(s: string): number {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\') { i++; continue }
+    if (s[i] === '"') return i
+  }
+  return -1
+}
+
+const diffEditorContainer = ref<HTMLElement>()
+let diffEditor: monaco.editor.IDiffEditor | null = null
+
+function createDiffEditor() {
+  if (!diffEditorContainer.value || !strReplaceInfo.value || diffEditor) return
+  const info = strReplaceInfo.value
+  const lang = getLangFromPath(info.path)
+
+  diffEditor = monaco.editor.createDiffEditor(diffEditorContainer.value, {
+    readOnly: true,
+    renderSideBySide: false,
+    automaticLayout: true,
+    scrollBeyondLastLine: false,
+    minimap: { enabled: false },
+    lineNumbers: 'off',
+    folding: false,
+    glyphMargin: false,
+    lineDecorationsWidth: 0,
+    lineNumbersMinChars: 0,
+    renderOverviewRuler: false,
+    scrollbar: { vertical: 'hidden', horizontal: 'auto' },
+    stickyScroll: { enabled: false },
+    fontSize: 12,
+    theme: theme.value === 'dark' ? 'vs-dark' : 'vs',
+  })
+
+  const originalModel = monaco.editor.createModel(info.oldString, lang)
+  const modifiedModel = monaco.editor.createModel(info.newString, lang)
+  diffEditor.setModel({ original: originalModel, modified: modifiedModel })
+
+  diffEditor.onDidUpdateDiff(() => {
+    updateDiffEditorHeight()
+  })
+  nextTick(updateDiffEditorHeight)
+}
+
+function updateDiffEditorHeight() {
+  if (!diffEditor || !diffEditorContainer.value) return
+  const modifiedEditor = diffEditor.getModifiedEditor()
+  const lineCount = Math.max(
+    modifiedEditor.getModel()?.getLineCount() || 0,
+    diffEditor.getOriginalEditor().getModel()?.getLineCount() || 0,
+  )
+  const lineHeight = modifiedEditor.getOption(monaco.editor.EditorOption.lineHeight)
+  const diffDecorations = 3
+  const height = Math.min((lineCount + diffDecorations) * lineHeight + 12, 350)
+  diffEditorContainer.value.style.height = `${height}px`
+}
+
+function disposeDiffEditor() {
+  if (diffEditor) {
+    const model = diffEditor.getModel()
+    model?.original?.dispose()
+    model?.modified?.dispose()
+    diffEditor.dispose()
+    diffEditor = null
+  }
+}
+
+watch(() => theme.value, () => {
+  if (diffEditor) {
+    diffEditor.updateOptions({ theme: theme.value === 'dark' ? 'vs-dark' : 'vs' })
+  }
+})
+
+watch([expanded, () => props.status], ([exp, st]) => {
+  if (isStrReplace.value && exp && st !== 'streaming') {
+    nextTick(createDiffEditor)
+  }
+}, { immediate: true })
+
+onMounted(() => {
+  if (isStrReplace.value && expanded.value && props.status !== 'streaming') {
+    nextTick(createDiffEditor)
+  }
+})
+
+onUnmounted(disposeDiffEditor)
 
 const execCmd = computed(() => {
   if (!isExecCommand.value) return ''
@@ -302,8 +446,8 @@ const execOutput = computed(() => {
       </div>
     </div>
 
-    <!-- File gen panel: streaming (always visible) -->
-    <div v-if="isFileGenTool && status === 'streaming' && fileInfo" class="tool-detail">
+    <!-- StrReplace: streaming -->
+    <div v-if="isStrReplace && status === 'streaming' && fileInfo" class="tool-detail">
       <div class="file-gen-panel">
         <div class="file-gen-header">
           <div class="file-gen-title">
@@ -324,9 +468,54 @@ const execOutput = computed(() => {
       </div>
     </div>
 
-    <!-- File gen panel: non-streaming (expandable) -->
+    <!-- StrReplace: diff view (expandable) -->
     <Transition name="expand">
-    <div v-show="expanded && isFileGenTool && status !== 'streaming'" class="tool-detail">
+    <div v-show="expanded && isStrReplace && status !== 'streaming'" class="tool-detail">
+      <div class="file-gen-panel">
+        <div class="file-gen-header">
+          <div class="file-gen-title">
+            <svg class="file-gen-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span class="file-gen-path">{{ strReplaceInfo?.path || '' }}</span>
+          </div>
+        </div>
+        <div ref="diffEditorContainer" class="diff-editor-container"></div>
+        <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="file-gen-footer">
+          <span class="file-gen-result" :class="result.startsWith('[error]') ? 'result-err' : 'result-ok'">
+            {{ result.startsWith('[error]') ? result : '✓ ' + result }}
+          </span>
+        </div>
+      </div>
+    </div>
+    </Transition>
+
+    <!-- Write: streaming (always visible) -->
+    <div v-if="isWriteTool && status === 'streaming' && fileInfo" class="tool-detail">
+      <div class="file-gen-panel">
+        <div class="file-gen-header">
+          <div class="file-gen-title">
+            <svg class="file-gen-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+            </svg>
+            <span class="file-gen-path">{{ fileInfo.path || '...' }}</span>
+          </div>
+          <span class="file-gen-badge">
+            <span class="file-gen-dot"></span>
+            {{ fileLineCount }} 行
+          </span>
+        </div>
+        <div ref="streamingCodeEl" class="file-gen-body">
+          <pre class="file-gen-code">{{ fileInfo.content || '' }}<span class="cursor-blink">▍</span></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Write: non-streaming (expandable) -->
+    <Transition name="expand">
+    <div v-show="expanded && isWriteTool && status !== 'streaming'" class="tool-detail">
       <div class="file-gen-panel">
         <div class="file-gen-header">
           <div class="file-gen-title">
@@ -695,6 +884,13 @@ const execOutput = computed(() => {
 @keyframes pulse-dot {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
+}
+
+.diff-editor-container {
+  height: 120px;
+  min-height: 40px;
+  max-height: 350px;
+  overflow: hidden;
 }
 
 .file-gen-body {
