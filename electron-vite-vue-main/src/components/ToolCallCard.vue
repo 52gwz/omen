@@ -153,6 +153,12 @@ const displayResult = computed(() => {
   return processCarriageReturns(props.result)
 })
 
+const imageDataUrl = computed(() => {
+  if (!props.result) return ''
+  const m = props.result.match(/^\[image_data:(data:image\/[^;]+;base64,[^\]]+)\]$/)
+  return m ? m[1] : ''
+})
+
 const displayStreamOutput = computed(() => {
   if (!props.streamOutput) return ''
   return processCarriageReturns(props.streamOutput)
@@ -351,18 +357,18 @@ function updateDiffEditorHeight() {
 }
 
 function disposeDiffEditor() {
-  if (diffEditor) {
-    const model = diffEditor.getModel()
-    model?.original?.dispose()
-    model?.modified?.dispose()
-    diffEditor.dispose()
-    diffEditor = null
-  }
+  if (!diffEditor) return
+  const model = diffEditor.getModel()
+  diffEditor.setModel(null)
+  diffEditor.dispose()
+  diffEditor = null
+  model?.original?.dispose()
+  model?.modified?.dispose()
 }
 
 watch(() => theme.value, () => {
   if (diffEditor) {
-    diffEditor.updateOptions({ theme: theme.value === 'dark' ? 'vs-dark' : 'vs' })
+    monaco.editor.setTheme(theme.value === 'dark' ? 'vs-dark' : 'vs')
   }
 })
 
@@ -599,7 +605,8 @@ const execOutput = computed(() => {
       </div>
 
       <div v-if="result && (status === 'completed' || status === 'error' || status === 'rejected')" class="result-panel">
-        <pre class="result-content">{{ displayResult }}</pre>
+        <img v-if="imageDataUrl" :src="imageDataUrl" class="result-image" />
+        <pre v-else class="result-content">{{ displayResult }}</pre>
       </div>
     </div>
     </Transition>
@@ -819,6 +826,13 @@ const execOutput = computed(() => {
   word-break: break-all;
   font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
   line-height: 1.5;
+}
+
+.result-image {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 6px;
+  object-fit: contain;
 }
 
 /* ---- File Generation Panel ---- */

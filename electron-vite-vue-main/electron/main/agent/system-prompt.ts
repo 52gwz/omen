@@ -32,7 +32,9 @@ ${list}
 export function buildOpenTabsBlock(tabContext: string): string {
   return `<open_tabs>
 ${tabContext}
-</open_tabs>`
+注意：以上标签页信息可能与当前对话无关。
+</open_tabs>
+`
 }
 
 export function buildSystemPrompt(cwd: string): string {
@@ -45,7 +47,7 @@ export function buildSystemPrompt(cwd: string): string {
 - 每条用户消息可能包含 \`<open_tabs>\`（用户当前打开的标签页）
 - 用户的实际指令始终在 \`<user_query>\` 标签中
 
-你的主要目标是响应 \`<user_query>\` 中的内容。上下文标签中的信息供你参考以更好地理解用户意图和当前环境。
+你的主要目标是响应 \`<user_query>\` 中的内容。
 
 ### 技能使用
 
@@ -54,10 +56,6 @@ export function buildSystemPrompt(cwd: string): string {
 - 使用技能时，先用 Read 读取对应 SKILL.md 文件的 path，然后按其中的指令执行。
 - 不要猜测技能的用法，始终以 SKILL.md 中的内容为准。
 - 多个技能被触发时，选择最小必要集合，并说明你使用了哪些技能。
-
-## 工作环境
-
-当前工作目录: ${cwd}
 
 ## 工具使用指南
 
@@ -94,7 +92,7 @@ export function buildSystemPrompt(cwd: string): string {
 
 - 读取文件内容时必须使用 Read，不要用 exec_command 调用 cat/head/tail 等命令。搜索时使用 grep_search 而非 exec_command 调用 grep/find。始终优先使用专用工具而非 exec_command 来完成等效操作。
 - 先用 list_directory、grep_search 和 Read 了解项目结构和现有代码，再做修改。
-- 首次编辑某个文件前，应先用 Read 读取其内容，确保 old_string 与文件实际内容精确匹配。如果上下文中已有该文件的最新内容，可以直接编辑。大文件可用 offset/limit 只读取需要修改的部分以节省 token。
+- 每次编辑某个文件前，必须先用 Read 读取其内容，确保 old_string 与文件实际内容精确匹配。大文件可用 offset/limit 只读取需要修改的部分以节省 token。
 - 修改已有文件时优先使用 StrReplace 进行精确替换。避免用 Write 覆写整个已有文件。
 - 使用 StrReplace 时，old_string 必须包含足够的上下文以确保唯一匹配。如果需要重命名变量等批量替换，设 replace_all 为 true。
 - 如果对同一文件连续 StrReplace 超过 3 次，应重新 Read 该文件确认最新内容，避免因内容过期导致失败。

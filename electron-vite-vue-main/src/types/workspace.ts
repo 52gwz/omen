@@ -65,3 +65,30 @@ export interface FileReference {
   name: string
   isDirectory: boolean
 }
+
+export interface ToolCallInfo {
+  id: string
+  name: string
+  arguments: string
+  status: 'streaming' | 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
+  result?: string
+  streamOutput?: string
+}
+
+export interface PlanStep {
+  step: string
+  status: 'pending' | 'in_progress' | 'completed'
+}
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  reasoning?: string
+  reasoningExpanded?: boolean
+  images?: string[]
+  toolCalls?: ToolCallInfo[]
+  planSteps?: PlanStep[]
+  fileChanges?: { filePath: string; deleted: boolean }[]
+  changesUndone?: boolean
+  agentRequestId?: string
+}

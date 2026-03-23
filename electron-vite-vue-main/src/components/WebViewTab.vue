@@ -165,7 +165,7 @@ watch(() => props.filePath, () => {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  background: var(--c-mantle);
+  background: #fff;
   border-bottom: 1px solid var(--c-surface0);
   flex-shrink: 0;
 }

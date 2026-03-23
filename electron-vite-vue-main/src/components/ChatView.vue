@@ -103,6 +103,10 @@ function setReasoningContentRef(el: HTMLElement | null, idx: number) {
   else reasoningContentRefs.delete(idx)
 }
 
+function setEditComposerRef(el: InstanceType<typeof ChatComposer> | null) {
+  editComposerRef.value = el ?? undefined
+}
+
 function scrollReasoningToBottom(idx: number) {
   nextTick(() => {
     const el = reasoningContentRefs.get(idx)
@@ -799,15 +803,45 @@ function copyMessage(msg: ChatMessage) {
 
 const editingIndex = ref<number | null>(null)
 const editingContent = ref('')
+const stashedFromIndex = ref<number | null>(null)
 
-function editMessage(index: number) {
+async function editMessage(index: number) {
   const msg = messages[index]
-  if (!msg) return
+  if (!msg || msg.role !== 'user') return
+
+  for (let i = index + 1; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.agentRequestId && m.fileChanges?.length && !m.changesUndone) {
+      await window.agentChat.undoChanges(m.agentRequestId)
+      for (const f of m.fileChanges) fileHighlights.delete(f.filePath)
+    }
+  }
+
+  stashedFromIndex.value = index + 1
   editingIndex.value = index
   editingContent.value = msg.content
   nextTick(() => {
     editComposerRef.value?.focusInput()
   })
+}
+
+async function restoreStash() {
+  if (stashedFromIndex.value === null) return
+
+  for (let i = stashedFromIndex.value; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.agentRequestId && m.fileChanges?.length && !m.changesUndone) {
+      const result = await window.agentChat.reapplyChanges(m.agentRequestId)
+      if (!result.error) {
+        await applyHighlights(m.agentRequestId)
+      }
+    }
+  }
+
+  stashedFromIndex.value = null
+  editingIndex.value = null
+  scheduleSave()
+  scrollToBottom(true)
 }
 
 function confirmEdit() {
@@ -816,8 +850,12 @@ function confirmEdit() {
   const text = editingContent.value.trim()
   if (!text) { cancelEdit(); return }
 
+  if (stashedFromIndex.value !== null) {
+    messages.splice(stashedFromIndex.value)
+  }
+  stashedFromIndex.value = null
+
   const msg = messages[idx]
-  messages.splice(idx + 1)
   msg.content = text
   if (msg.images) delete (msg as any).images
   scheduleSave()
@@ -834,7 +872,11 @@ function confirmEdit() {
 }
 
 function cancelEdit() {
-  editingIndex.value = null
+  if (stashedFromIndex.value !== null) {
+    restoreStash()
+  } else {
+    editingIndex.value = null
+  }
 }
 
 // 点击外部区域退出编辑
@@ -912,7 +954,11 @@ async function sendWithContent(text: string, images?: string[], providerId?: str
   sendMessage()
 }
 
-defineExpose({ loadConfig, sendWithContent })
+function insertCodeReference(_id: string, ref: CodeReference) {
+  pendingCodeReferences.push(ref)
+}
+
+defineExpose({ loadConfig, sendWithContent, insertCodeReference })
 </script>
 
 <template>
@@ -927,7 +973,7 @@ defineExpose({ loadConfig, sendWithContent })
         v-for="(msg, i) in messages"
         :key="i"
         class="message-row"
-        :class="msg.role"
+        :class="[msg.role, { stashed: stashedFromIndex !== null && i >= stashedFromIndex }]"
       >
         <!-- Thinking indicator (outside bubble, no background) -->
         <div
@@ -978,7 +1024,7 @@ defineExpose({ loadConfig, sendWithContent })
           <!-- Inline editing -->
           <div v-if="editingIndex === i" class="edit-inline" @click.stop>
             <ChatComposer
-              ref="editComposerRef"
+              :ref="(el) => setEditComposerRef(el as InstanceType<typeof ChatComposer> | null)"
               v-model="editingContent"
               variant="chat"
               :pending-images="[]"
@@ -1050,22 +1096,6 @@ defineExpose({ loadConfig, sendWithContent })
           <div v-if="msg.role === 'assistant' && msg.fileChanges?.length && !isStreaming" class="change-actions">
             <div class="change-header">
               <span class="change-label">{{ msg.fileChanges.length }} 个文件已修改</span>
-              <div class="change-btns">
-                <button v-if="!msg.changesUndone" class="change-btn undo" @click="undoChanges(msg)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="1 4 1 10 7 10"/>
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-                  </svg>
-                  撤销
-                </button>
-                <button v-if="msg.changesUndone" class="change-btn reapply" @click="reapplyChanges(msg)">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="23 4 23 10 17 10"/>
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-                  </svg>
-                  重新应用
-                </button>
-              </div>
             </div>
             <div class="change-file-list">
               <button
@@ -1115,6 +1145,24 @@ defineExpose({ loadConfig, sendWithContent })
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- Stash restore banner -->
+      <div v-if="stashedFromIndex !== null" class="stash-banner">
+        <div class="stash-info">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10"/>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          <span>已回退 {{ messages.length - stashedFromIndex }} 条消息的修改</span>
+        </div>
+        <button class="stash-restore-btn" @click="restoreStash">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+          </svg>
+          恢复对话
+        </button>
       </div>
     </div>
 
@@ -1255,6 +1303,14 @@ defineExpose({ loadConfig, sendWithContent })
 
 .message-row.assistant + .message-row.assistant {
   margin-top: 0;
+}
+
+.message-row.stashed {
+  opacity: 0.4;
+  pointer-events: none;
+  user-select: none;
+  filter: grayscale(0.6);
+  transition: opacity 0.25s, filter 0.25s;
 }
 
 .message-bubble {
@@ -1422,6 +1478,7 @@ defineExpose({ loadConfig, sendWithContent })
   text-decoration: underline;
 }
 
+
 .markdown-body :deep(img) {
   max-width: 100%;
   border-radius: 8px;
@@ -1558,6 +1615,53 @@ defineExpose({ loadConfig, sendWithContent })
 
 @keyframes blink {
   50% { opacity: 0; }
+}
+
+.stash-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  margin: 8px 16px;
+  background: var(--c-surface0);
+  border: 1px solid var(--c-surface2);
+  border-radius: 10px;
+}
+
+.stash-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--c-subtext0);
+}
+
+.stash-info svg {
+  color: var(--c-overlay0);
+  flex-shrink: 0;
+}
+
+.stash-restore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--c-blue);
+  background: transparent;
+  color: var(--c-blue);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stash-restore-btn:hover {
+  background: var(--c-blue);
+  color: #fff;
 }
 
 .error-bar {

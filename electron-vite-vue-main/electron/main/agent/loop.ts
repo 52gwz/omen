@@ -300,18 +300,15 @@ export async function runAgentLoop(params: AgentRunParams) {
     { role: 'system', content: buildSystemPrompt(cwd) },
   ]
 
-  let firstUserSeen = false
+  const contextParts: Array<{ type: 'text'; text: string }> = []
+  contextParts.push({ type: 'text', text: buildUserInfoBlock(cwd) })
+  const skillsBlock = buildSkillsBlock(enabledSkills)
+  if (skillsBlock) contextParts.push({ type: 'text', text: skillsBlock })
+  allMessages.push({ role: 'user', content: contextParts })
+
   for (const m of params.messages) {
     if (m.role === 'user') {
       const parts: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = []
-
-      if (!firstUserSeen) {
-        firstUserSeen = true
-        let contextBlock = buildUserInfoBlock(cwd)
-        const skillsBlock = buildSkillsBlock(enabledSkills)
-        if (skillsBlock) contextBlock += '\n' + skillsBlock
-        parts.push({ type: 'text', text: contextBlock })
-      }
 
       if (tabContext) {
         parts.push({ type: 'text', text: buildOpenTabsBlock(tabContext) })
@@ -469,19 +466,44 @@ export async function runAgentLoop(params: AgentRunParams) {
       }
       const toolResult = await executeTool(tc.function.name, args, cwd, execOptions)
 
-      const toolMsg: Message = {
-        role: 'tool',
-        content: toolResult.content,
-        tool_call_id: tc.id,
-      }
-      allMessages.push(toolMsg)
+      const imageMatch = toolResult.content.match(/^\[image:([^:]+):base64\]\n([\s\S]+)$/)
+      if (imageMatch) {
+        const [, mimeType, base64Data] = imageMatch
 
-      sender.send('agent:tool-result', {
-        requestId,
-        toolCallId: tc.id,
-        result: toolResult.content,
-        rejected: false,
-      })
+        allMessages.push({
+          role: 'tool',
+          content: '已读取图片文件，图片内容见下条消息。',
+          tool_call_id: tc.id,
+        })
+        allMessages.push({
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+            { type: 'text', text: '（以上是 Read 工具读取到的图片，请根据对话上下文分析）' },
+          ],
+        })
+
+        sender.send('agent:tool-result', {
+          requestId,
+          toolCallId: tc.id,
+          result: `[image_data:data:${mimeType};base64,${base64Data}]`,
+          rejected: false,
+        })
+      } else {
+        const toolMsg: Message = {
+          role: 'tool',
+          content: toolResult.content,
+          tool_call_id: tc.id,
+        }
+        allMessages.push(toolMsg)
+
+        sender.send('agent:tool-result', {
+          requestId,
+          toolCallId: tc.id,
+          result: toolResult.content,
+          rejected: false,
+        })
+      }
     }
 
     // Continue the loop - the LLM will see tool results and decide next action

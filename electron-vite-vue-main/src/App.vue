@@ -151,6 +151,7 @@ function deserializeNode(data: any): PaneNode {
   }
   return {
     type: 'split',
+    id: data.id,
     direction: data.direction,
     ratio: data.ratio,
     first: deserializeNode(data.first),
@@ -379,16 +380,22 @@ function openConversationTab(convId: string, options?: { title?: string; reuseAc
   if (focusExistingTab(convId)) return
 
   const c = getCtx()
-  const pane = findBestPaneForCategory(c, 'conversation')
-  const activeTab = pane.tabs[pane.activeTabIdx]
 
-  if (options?.reuseActiveEmptyTab && activeTab && !activeTab.convId) {
-    activeTab.convId = convId
-  } else {
-    pane.tabs.push(createTab(convId))
-    pane.activeTabIdx = pane.tabs.length - 1
+  // When reusing an empty tab, always prefer the currently active pane's empty tab.
+  // This ensures conversations created from the right column's WelcomeScreen stay there.
+  if (options?.reuseActiveEmptyTab) {
+    const activePaneVal = getActivePane(c)
+    const activeTab = activePaneVal.tabs[activePaneVal.activeTabIdx]
+    if (activeTab && !activeTab.convId) {
+      activeTab.convId = convId
+      c.activePaneId = activePaneVal.id
+      return
+    }
   }
 
+  const pane = findBestPaneForCategory(c, 'conversation')
+  pane.tabs.push(createTab(convId))
+  pane.activeTabIdx = pane.tabs.length - 1
   c.activePaneId = pane.id
 }
 
@@ -527,7 +534,6 @@ function onDeleteConversation(convId: string) {
   runningConvIds.delete(convId)
   delete chatRefs.value[convId]
   delete tabTitles[convId]
-  delete globalMessagesCache[convId]
   forEachPane(c.root, (pane) => {
     for (const tab of pane.tabs) {
       if (tab.convId === convId) tab.convId = ''
@@ -762,33 +768,33 @@ function setWebviewCurrentUrl(filePath: string, url: string) {
 const allOpenTabs = computed<MentionTab[]>(() => {
   const result: MentionTab[] = []
   const seen = new Set<string>()
-  for (const ctx of Object.values(tabContexts)) {
-    forEachPane(ctx.root, (pane) => {
-      for (const tab of pane.tabs) {
-        if (!tab.convId || seen.has(tab.convId)) continue
-        seen.add(tab.convId)
-        if (tab.convId.startsWith(EDITOR_PREFIX)) {
-          const fp = tab.convId.slice(EDITOR_PREFIX.length)
-          const normalized = fp.replace(/\\/g, '/')
-          const filename = normalized.split('/').pop() || fp
-          const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : ''
-          result.push({ key: filename, value: tab.convId, type: 'file', path: dir })
-        } else if (tab.convId.startsWith(WEBVIEW_PREFIX)) {
-          const fp = tab.convId.slice(WEBVIEW_PREFIX.length)
-          const currentUrl = webviewCurrentUrls[fp] ?? (fp.startsWith('__blank_') ? '' : fp)
-          let label: string
-          if (!currentUrl || currentUrl === 'about:blank') {
-            label = '浏览器'
-          } else if (currentUrl.startsWith('file://')) {
-            label = currentUrl.replace(/^file:\/\//, '').split('/').pop() || fp
-          } else {
-            label = currentUrl.replace(/^https?:\/\//, '').split('/')[0] || currentUrl
-          }
-          result.push({ key: label, value: tab.convId, type: 'webview', currentUrl })
+  const ctx = tabContexts[ctxKey.value]
+  if (!ctx) return result
+  forEachPane(ctx.root, (pane) => {
+    for (const tab of pane.tabs) {
+      if (!tab.convId || seen.has(tab.convId)) continue
+      seen.add(tab.convId)
+      if (tab.convId.startsWith(EDITOR_PREFIX)) {
+        const fp = tab.convId.slice(EDITOR_PREFIX.length)
+        const normalized = fp.replace(/\\/g, '/')
+        const filename = normalized.split('/').pop() || fp
+        const dir = normalized.includes('/') ? normalized.slice(0, normalized.lastIndexOf('/')) : ''
+        result.push({ key: filename, value: tab.convId, type: 'file', path: dir })
+      } else if (tab.convId.startsWith(WEBVIEW_PREFIX)) {
+        const fp = tab.convId.slice(WEBVIEW_PREFIX.length)
+        const currentUrl = webviewCurrentUrls[fp] ?? (fp.startsWith('__blank_') ? '' : fp)
+        let label: string
+        if (!currentUrl || currentUrl === 'about:blank') {
+          label = '浏览器'
+        } else if (currentUrl.startsWith('file://')) {
+          label = currentUrl.replace(/^file:\/\//, '').split('/').pop() || fp
+        } else {
+          label = currentUrl.replace(/^https?:\/\//, '').split('/')[0] || currentUrl
         }
+        result.push({ key: label, value: tab.convId, type: 'webview', currentUrl })
       }
-    })
-  }
+    }
+  })
   return result
 })
 
@@ -803,12 +809,12 @@ function openTabById(tabId: string) {
 
 const activeTabConvIds = computed<Set<string>>(() => {
   const ids = new Set<string>()
-  for (const ctx of Object.values(tabContexts)) {
-    forEachPane(ctx.root, (pane) => {
-      const convId = pane.tabs[pane.activeTabIdx]?.convId
-      if (convId) ids.add(convId)
-    })
-  }
+  const ctx = tabContexts[ctxKey.value]
+  if (!ctx) return ids
+  forEachPane(ctx.root, (pane) => {
+    const convId = pane.tabs[pane.activeTabIdx]?.convId
+    if (convId) ids.add(convId)
+  })
   return ids
 })
 

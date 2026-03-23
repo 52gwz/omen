@@ -66,7 +66,7 @@ onMounted(loadSkills)
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--c-base);
+  background: #fff;
   overflow: hidden;
 }
 
