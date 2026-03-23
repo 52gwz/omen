@@ -3,7 +3,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, injec
 import { marked } from 'marked'
 import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
-import type { CodeReference, FileReference } from '../types/workspace'
+import type { CodeReference, FileReference, ToolCallInfo, PlanStep, ChatMessage } from '../types/workspace'
 
 marked.setOptions({
   breaks: true,
@@ -21,32 +21,6 @@ const emit = defineEmits<{
   titleChange: [title: string]
 }>()
 
-interface ToolCallInfo {
-  id: string
-  name: string
-  arguments: string
-  status: 'streaming' | 'pending' | 'confirmed' | 'rejected' | 'running' | 'completed' | 'error'
-  result?: string
-  streamOutput?: string
-}
-
-interface PlanStep {
-  step: string
-  status: 'pending' | 'in_progress' | 'completed'
-}
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-  reasoning?: string
-  reasoningExpanded?: boolean
-  images?: string[]
-  toolCalls?: ToolCallInfo[]
-  planSteps?: PlanStep[]
-  fileChanges?: { filePath: string; deleted: boolean }[]
-  changesUndone?: boolean
-  agentRequestId?: string
-}
 
 function renderMarkdown(raw: string): string {
   return marked.parse(raw, { async: false }) as string
