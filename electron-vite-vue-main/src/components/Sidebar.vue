@@ -8,6 +8,8 @@ const props = defineProps<{
   projectId?: string
   projectName?: string
   projectPath?: string
+  /** 主工作区当前激活的编辑器文件路径，用于文件树高亮 */
+  activeEditorFilePath?: string
 }>()
 
 const emit = defineEmits<{
@@ -249,6 +251,10 @@ provide('fileTree:cancelNewItem', cancelNewItem)
 provide('fileTree:onNewItemKeydown', onNewItemKeydown)
 provide('fileTree:lastClickedPath', lastClickedPath)
 provide('fileTree:allEntries', allFlatEntries)
+provide(
+  'fileTree:activeEditorPath',
+  computed(() => props.activeEditorFilePath ?? ''),
+)
 
 async function loadConversations() {
   const list = await window.conversationApi.list(props.projectId || null)
@@ -698,7 +704,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 12px 10px;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--c-surface0);
   gap: 6px;
 }
@@ -795,7 +801,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   border-radius: 8px;
   border: 1px dashed var(--c-surface2);
   background: transparent;
-  color: var(--c-subtext0);
+  color: var(--c-sidebar-text);
   font-size: 0.82rem;
   font-weight: 500;
   font-family: inherit;
@@ -942,7 +948,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 .project-name {
   font-size: 0.82rem;
-  color: var(--c-subtext0);
+  color: var(--c-sidebar-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1014,7 +1020,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 .conv-title {
   font-size: 0.82rem;
-  color: var(--c-subtext0);
+  color: var(--c-sidebar-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1078,7 +1084,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: var(--c-subtext0);
+  color: var(--c-sidebar-text);
   font-size: 0.82rem;
   font-weight: 500;
   font-family: inherit;

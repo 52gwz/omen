@@ -43,7 +43,8 @@ export function buildSystemPrompt(cwd: string): string {
 ## 消息格式
 
 对话中的上下文信息通过 XML 标签嵌入在用户消息中：
-- 第一条用户消息包含 \`<user_info>\`（系统环境信息）和 \`<agent_skills>\`（可用技能列表）
+- 第一条用户消息包含 \`<user_info>\`（系统环境信息）和 \`<
+>\`（可用技能列表）
 - 每条用户消息可能包含 \`<open_tabs>\`（用户当前打开的标签页）
 - 用户的实际指令始终在 \`<user_query>\` 标签中
 

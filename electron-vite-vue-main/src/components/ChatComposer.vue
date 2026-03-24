@@ -457,14 +457,25 @@ defineExpose({
           </button>
           <button
             v-else
-            class="action-circle-btn"
+            class="action-circle-btn action-send-btn"
             :disabled="!canSend"
             title="发送"
             @click="emit('send')"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <svg
+              class="send-icon"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
               <line x1="12" y1="19" x2="12" y2="5" />
-              <polyline points="5 12 12 5 19 12" />
+              <polyline points="5 12 12 5 19 12" fill="none" />
             </svg>
           </button>
         </div>
@@ -490,6 +501,14 @@ defineExpose({
 
 :root:not([data-theme="dark"]) .input-card {
   background: #ffffff;
+}
+
+:root[data-theme="dark"] .input-card {
+  background: #1F1F1F;
+}
+
+:root[data-theme="dark"] .composer-shell.variant-chat .input-card {
+  background: #232323;
 }
 
 .composer-shell.variant-chat .input-card {
@@ -906,6 +925,77 @@ defineExpose({
 .action-circle-btn.danger:hover {
   background: color-mix(in srgb, var(--c-red, #e64553) 26%, var(--c-surface0) 74%);
   color: var(--c-red, #e64553);
+}
+
+/* 深色：输入白字，工具栏图标/模式/模型 #919191，发送按钮白图标 */
+:root[data-theme="dark"] .composer-editor {
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .composer-placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+:root[data-theme="dark"] .toolbar-icon-btn {
+  color: #919191;
+}
+
+:root[data-theme="dark"] .toolbar-icon-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="dark"] .mode-trigger {
+  color: #919191;
+}
+
+:root[data-theme="dark"] .mode-chevron {
+  color: #919191;
+}
+
+:root[data-theme="dark"] .mode-trigger:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+}
+
+:root[data-theme="dark"] .mode-trigger:hover .mode-chevron {
+  color: #ffffff;
+}
+
+:root[data-theme="dark"] .model-name {
+  color: #919191;
+}
+
+:root[data-theme="dark"] .selector-chevron {
+  color: #919191;
+}
+
+:root[data-theme="dark"] .model-selector-trigger:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: transparent;
+}
+
+:root[data-theme="dark"] .model-selector-trigger:hover .model-name,
+:root[data-theme="dark"] .model-selector-trigger:hover .selector-chevron {
+  color: #ffffff;
+}
+
+/* 发送：白底填充 + 镂空箭头（线描） */
+:root[data-theme="dark"] .action-send-btn {
+  background: #ffffff;
+  border: none;
+  color: #232323;
+}
+
+:root[data-theme="dark"] .action-send-btn:hover:not(:disabled) {
+  background: #e8e8e8;
+  color: #232323;
+}
+
+:root[data-theme="dark"] .action-send-btn .send-icon {
+  fill: none;
+  stroke: currentColor;
 }
 
 .composer-references {

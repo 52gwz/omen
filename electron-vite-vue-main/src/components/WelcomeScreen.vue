@@ -139,7 +139,7 @@ onMounted(() => {
               来吧！开始为 <span class="project-highlight">{{ projectName }}</span> 做点什么
             </template>
             <template v-else>
-              Omen Agent, 新时代的工作方式
+              你可以在下方开启对话，或者拖入项目到这里
             </template>
           </h1>
         </Transition>
@@ -248,11 +248,15 @@ onMounted(() => {
 .welcome-title {
   font-size: 1.75rem;
   font-weight: 700;
-  color: var(--c-text);
+  color: var(--c-text-primary);
   text-align: center;
   margin: 0;
   letter-spacing: -0.01em;
   line-height: 1.4;
+}
+
+:root[data-theme="dark"] .welcome-title {
+  color: #ffffff;
 }
 
 .project-highlight {

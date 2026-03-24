@@ -64,6 +64,15 @@
   --c-scrollbar: #bcc0cc;
   --c-scrollbar-hover: #9ca0b0;
 
+  --c-titlebar-bg: var(--c-chrome-bg);
+  --c-titlebar-btn: var(--c-overlay0);
+  --c-sidebar-text: var(--c-subtext0);
+
+  --c-tab-bar-bg: var(--c-mantle);
+  --c-tab-inactive-bg: transparent;
+  --c-tab-inactive-text: var(--c-subtext0);
+  --c-tab-active-text: var(--c-text);
+
   color: var(--c-text);
   background-color: var(--c-base);
 }
@@ -71,22 +80,22 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --c-base: #1e1e2e;
-  --c-mantle: #181825;
-  --c-chrome-bg: var(--c-mantle);
-  --c-chrome-hover-bg: var(--c-surface-hover);
-  --c-chrome-selected-bg: color-mix(in srgb, var(--c-surface0) 84%, var(--c-surface1) 16%);
-  --c-surface0: #313244;
-  --c-surface1: #45475a;
-  --c-surface2: #585b70;
-  --c-surface-alt: #2a2a3c;
-  --c-surface-hover: #3b3b52;
+  --c-base: #181818;
+  --c-mantle: #141414;
+  --c-chrome-bg: #252526;
+  --c-chrome-hover-bg: #3a3a3a;
+  --c-chrome-selected-bg: #333333;
+  --c-surface0: #2a2a2a;
+  --c-surface1: #3d3d3d;
+  --c-surface2: #505050;
+  --c-surface-alt: #222222;
+  --c-surface-hover: #353535;
 
-  --c-text: #cdd6f4;
-  --c-subtext0: #a6adc8;
-  --c-subtext1: #bac2de;
-  --c-overlay0: #6c7086;
-  --c-overlay1: #7f849c;
+  --c-text: #e0e0e0;
+  --c-subtext0: #999999;
+  --c-subtext1: #b0b0b0;
+  --c-overlay0: #666666;
+  --c-overlay1: #777777;
 
   --c-blue: #89b4fa;
   --c-green: #a6e3a1;
@@ -95,14 +104,14 @@
   --c-peach: #fab387;
   --c-code-inline: #f38ba8;
 
-  --c-user-bubble-bg: #313244;
-  --c-user-bubble-text: #cdd6f4;
+  --c-user-bubble-bg: #242424;
+  --c-user-bubble-text: #fff;
   --c-send-btn-bg: #89b4fa;
-  --c-send-btn-text: #1e1e2e;
+  --c-send-btn-text: #181818;
   --c-error-bar-bg: #f38ba8;
-  --c-error-bar-text: #1e1e2e;
+  --c-error-bar-text: #181818;
   --c-confirm-btn-bg: #a6e3a1;
-  --c-confirm-btn-text: #1e1e2e;
+  --c-confirm-btn-text: #181818;
 
   --c-badge-pending-bg: rgba(249, 226, 175, 0.15);
   --c-badge-pending-text: #f9e2af;
@@ -118,8 +127,17 @@
   --c-shadow-heavy: rgba(0, 0, 0, 0.5);
   --c-overlay-bg: rgba(0, 0, 0, 0.5);
 
-  --c-scrollbar: #45475a;
-  --c-scrollbar-hover: #585b70;
+  --c-scrollbar: #3d3d3d;
+  --c-scrollbar-hover: #505050;
+
+  --c-titlebar-bg: #3C3C3C;
+  --c-titlebar-btn: #C6C6C6;
+  --c-sidebar-text: #C9C9C9;
+
+  --c-tab-bar-bg: #252526;
+  --c-tab-inactive-bg: #2D2D2D;
+  --c-tab-inactive-text: #969696;
+  --c-tab-active-text: #FAFAFA;
 }
 
 body {

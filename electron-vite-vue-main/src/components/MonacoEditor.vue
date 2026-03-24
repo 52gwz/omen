@@ -130,8 +130,17 @@ function getLang(fp: string): string {
   return EXT_LANG_MAP[ext] || 'plaintext'
 }
 
+monaco.editor.defineTheme('dot-dark', {
+  base: 'vs-dark',
+  inherit: true,
+  rules: [],
+  colors: {
+    'editor.background': '#181818',
+  },
+})
+
 function getMonacoTheme(t: string) {
-  return t === 'dark' ? 'vs-dark' : 'vs'
+  return t === 'dark' ? 'dot-dark' : 'vs'
 }
 
 async function loadFile(opts?: { silent?: boolean }) {
@@ -396,10 +405,6 @@ onBeforeUnmount(() => {
     </div>
     <div class="editor-header">
       <div class="editor-file-info">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
         <span class="editor-filename" :title="filePath">{{ filePath }}</span>
         <span v-if="modified" class="editor-modified-dot" title="未保存"></span>
       </div>
@@ -568,7 +573,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: 6px 10px;
   border-bottom: 1px solid var(--c-surface0);
-  background: #fff;
+  background: var(--c-base);
   gap: 8px;
   min-height: 36px;
 }
@@ -581,15 +586,10 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 
-.editor-file-info svg {
-  flex-shrink: 0;
-  color: var(--c-blue);
-}
-
 .editor-filename {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--c-text);
+  color: #A9A9A9;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -698,16 +698,10 @@ onBeforeUnmount(() => {
   padding: 24px 32px;
   font-size: 0.9rem;
   line-height: 1.7;
-  background: #fff;
+  background: var(--c-base);
   color: var(--c-text);
-  /* 白底预览：覆盖主题变量，暗色主题下仍可读 */
-  --c-text: #1e1e1e;
-  --c-subtext0: #5c5c5c;
-  --c-surface0: #e2e2e4;
-  --c-mantle: #f0f1f3;
-  --c-surface1: #b8b8c0;
   scrollbar-width: thin;
-  scrollbar-color: var(--c-surface1) transparent;
+  scrollbar-color: var(--c-scrollbar) transparent;
 }
 
 .md-preview::-webkit-scrollbar {

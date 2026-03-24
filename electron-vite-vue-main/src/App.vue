@@ -410,6 +410,13 @@ const activeConvId = computed(() => {
   if (!pane) return ''
   return pane.tabs[pane.activeTabIdx]?.convId || ''
 })
+
+/** 当前聚焦栏中正在编辑的文件路径（用于侧栏文件树选中态） */
+const activeEditorFilePath = computed(() => {
+  const id = activeConvId.value
+  return id.startsWith(EDITOR_PREFIX) ? id.slice(EDITOR_PREFIX.length) : ''
+})
+
 const sidebarActiveConvId = computed(() => isConversationTab(activeConvId.value) ? activeConvId.value : '')
 
 watch([ctxKey, sidebarActiveConvId], () => {
@@ -909,6 +916,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         :project-id="activeProject?.id"
         :project-name="activeProject?.name"
         :project-path="activeProject?.path"
+        :active-editor-file-path="activeEditorFilePath"
         @select-conversation="onSelectConversation"
         @no-selection="onNoSelection"
         @delete-conversation="onDeleteConversation"
@@ -978,7 +986,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--c-chrome-bg);
+  background: var(--c-titlebar-bg);
   border-bottom: 1px solid var(--c-surface0);
   -webkit-app-region: drag;
   z-index: 100;
@@ -1006,7 +1014,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   -webkit-app-region: no-drag;
   background: none;
   border: none;
-  color: var(--c-overlay0);
+  color: var(--c-titlebar-btn);
   cursor: pointer;
   padding: 4px;
   border-radius: 5px;

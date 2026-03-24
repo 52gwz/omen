@@ -70,6 +70,10 @@ onMounted(loadSkills)
   overflow: hidden;
 }
 
+:root[data-theme="dark"] .skills-tab {
+  background: #181818;
+}
+
 .skills-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

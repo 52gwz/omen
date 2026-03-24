@@ -12,6 +12,8 @@ const saving = ref(false)
 const message = ref('')
 const expandedId = ref<string | null>(null)
 
+const expandedProvider = computed(() => providers.find(p => p.id === expandedId.value) || null)
+
 const fetchingMap = reactive<Record<string, boolean>>({})
 const fetchErrorMap = reactive<Record<string, string>>({})
 const newModelInput = reactive<Record<string, string>>({})
@@ -155,92 +157,90 @@ async function save() {
       <div class="settings-body">
         <div class="section-label">模型供应商</div>
 
-        <div v-for="(p, idx) in providers" :key="p.id" class="provider-card">
-          <div class="provider-card-header" @click="toggleProvider(p.id)">
-            <span class="provider-name">{{ p.name || '未命名供应商' }}</span>
-            <div class="provider-header-right">
-              <span v-if="p.models.length" class="model-count">{{ p.models.length }} 个模型</span>
-              <button class="icon-btn" @click.stop="removeProvider(idx)" title="删除此供应商">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />
-                </svg>
-              </button>
-              <svg
-                class="expand-chevron"
-                :class="{ expanded: expandedId === p.id }"
-                width="14" height="14" viewBox="0 0 24 24"
-                fill="none" stroke="currentColor" stroke-width="2.5"
-                stroke-linecap="round" stroke-linejoin="round"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
+        <div class="provider-grid">
+          <div
+            v-for="(p, idx) in providers"
+            :key="p.id"
+            class="provider-tile"
+            :class="{ active: expandedId === p.id }"
+            @click="toggleProvider(p.id)"
+          >
+            <div class="tile-icon">{{ (p.name || '?')[0].toUpperCase() }}</div>
+            <div class="tile-text">
+              <div class="tile-name">{{ p.name || '未命名' }}</div>
+              <div class="tile-meta">{{ p.models.length }} 个模型</div>
             </div>
+            <button class="tile-delete" @click.stop="removeProvider(idx)" title="删除">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
           </div>
 
-          <div v-if="expandedId === p.id" class="provider-card-body">
-            <label>
-              <span>名称</span>
-              <input v-model="p.name" type="text" placeholder="如 OpenAI、DeepSeek、Ollama" />
-            </label>
-            <label>
-              <span>API Key</span>
-              <div class="key-input-wrap">
-                <input v-model="p.apiKey" :type="keyVisibleMap[p.id] ? 'text' : 'password'" placeholder="sk-..." />
-                <button class="key-toggle-btn" type="button" @click="keyVisibleMap[p.id] = !keyVisibleMap[p.id]" tabindex="-1">
-                  <svg v-if="keyVisibleMap[p.id]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-                  </svg>
-                  <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
-                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
-                    <line x1="1" y1="1" x2="23" y2="23" />
-                    <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
-                  </svg>
-                </button>
-              </div>
-            </label>
-            <label>
-              <span>Base URL</span>
-              <input v-model="p.baseURL" type="text" placeholder="https://api.openai.com/v1" />
-            </label>
-
-            <div class="models-section">
-              <span class="field-label">模型列表</span>
-              <div class="model-input-row">
-                <input
-                  v-model="newModelInput[p.id]"
-                  type="text"
-                  class="model-input"
-                  placeholder="输入模型名称"
-                  @keydown.enter="addModelManual(p)"
-                />
-                <button class="small-btn" @click="addModelManual(p)">添加</button>
-                <button
-                  class="small-btn fetch-btn"
-                  :disabled="fetchingMap[p.id] || !p.apiKey"
-                  @click="fetchModelsFor(p)"
-                >
-                  {{ fetchingMap[p.id] ? '获取中...' : '获取列表' }}
-                </button>
-              </div>
-              <p v-if="fetchErrorMap[p.id]" class="fetch-hint">{{ fetchErrorMap[p.id] }}</p>
-              <div v-if="p.models.length" class="models-tags">
-                <span v-for="m in p.models" :key="m" class="model-tag">
-                  {{ m }}
-                  <button class="tag-remove" @click="removeModel(p, m)">×</button>
-                </span>
-              </div>
-              <p v-else class="no-models-hint">暂无模型，请手动添加或点击「获取列表」</p>
-            </div>
+          <div class="provider-tile add-tile" @click="addProvider">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <div class="tile-name">添加供应商</div>
           </div>
         </div>
 
-        <button class="add-provider-btn" @click="addProvider">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          添加供应商
-        </button>
+        <div v-if="expandedProvider" class="provider-detail">
+          <label>
+            <span>名称</span>
+            <input v-model="expandedProvider.name" type="text" placeholder="如 OpenAI、DeepSeek、Ollama" />
+          </label>
+          <label>
+            <span>API Key</span>
+            <div class="key-input-wrap">
+              <input v-model="expandedProvider.apiKey" :type="keyVisibleMap[expandedProvider.id] ? 'text' : 'password'" placeholder="sk-..." />
+              <button class="key-toggle-btn" type="button" @click="keyVisibleMap[expandedProvider.id] = !keyVisibleMap[expandedProvider.id]" tabindex="-1">
+                <svg v-if="keyVisibleMap[expandedProvider.id]" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                </svg>
+                <svg v-else width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                  <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+                </svg>
+              </button>
+            </div>
+          </label>
+          <label>
+            <span>Base URL</span>
+            <input v-model="expandedProvider.baseURL" type="text" placeholder="https://api.openai.com/v1" />
+          </label>
+
+          <div class="models-section">
+            <span class="field-label">模型列表</span>
+            <div class="model-input-row">
+              <input
+                v-model="newModelInput[expandedProvider.id]"
+                type="text"
+                class="model-input"
+                placeholder="输入模型名称"
+                @keydown.enter="addModelManual(expandedProvider)"
+              />
+              <button class="small-btn" @click="addModelManual(expandedProvider)">添加</button>
+              <button
+                class="small-btn fetch-btn"
+                :disabled="fetchingMap[expandedProvider.id] || !expandedProvider.apiKey"
+                @click="fetchModelsFor(expandedProvider)"
+              >
+                {{ fetchingMap[expandedProvider.id] ? '获取中...' : '获取列表' }}
+              </button>
+            </div>
+            <p v-if="fetchErrorMap[expandedProvider.id]" class="fetch-hint">{{ fetchErrorMap[expandedProvider.id] }}</p>
+            <div v-if="expandedProvider.models.length" class="models-tags">
+              <span v-for="m in expandedProvider.models" :key="m" class="model-tag">
+                {{ m }}
+                <button class="tag-remove" @click="removeModel(expandedProvider, m)">×</button>
+              </span>
+            </div>
+            <p v-else class="no-models-hint">暂无模型，请手动添加或点击「获取列表」</p>
+          </div>
+        </div>
 
         <div class="section-divider"></div>
 
@@ -287,7 +287,7 @@ async function save() {
 .settings-panel {
   background: var(--c-base);
   border-radius: 12px;
-  width: 500px;
+  width: 640px;
   max-width: 92vw;
   max-height: 90vh;
   display: flex;
@@ -342,53 +342,79 @@ async function save() {
   margin-bottom: 2px;
 }
 
-/* Provider card */
-.provider-card {
+/* Provider grid — horizontal cards, 2 per row */
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.provider-tile {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
   border: 1px solid var(--c-surface1);
   border-radius: 10px;
-  transition: border-color 0.2s;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.provider-tile:hover {
+  border-color: var(--c-surface2);
+  background: var(--c-surface0);
+}
+
+.provider-tile.active {
+  border-color: var(--c-blue, #1e66f5);
+  background: color-mix(in srgb, var(--c-blue, #1e66f5) 8%, transparent);
+  box-shadow: 0 0 0 1px var(--c-blue, #1e66f5);
+}
+
+.tile-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--c-surface1);
+  color: var(--c-text);
+  font-size: 0.95rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
 }
 
-.provider-card:hover {
-  border-color: var(--c-surface2);
+.provider-tile.active .tile-icon {
+  background: var(--c-blue, #1e66f5);
+  color: #fff;
 }
 
-.provider-card-header {
+.tile-text {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 14px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
 
-.provider-card-header:hover {
-  background: var(--c-surface0);
-}
-
-.provider-name {
-  font-size: 0.9rem;
+.tile-name {
+  font-size: 0.82rem;
   font-weight: 500;
   color: var(--c-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.provider-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.model-count {
-  font-size: 0.72rem;
+.tile-meta {
+  font-size: 0.7rem;
   color: var(--c-overlay1);
-  background: var(--c-surface0);
-  padding: 2px 8px;
-  border-radius: 10px;
 }
 
-.icon-btn {
+.tile-delete {
   background: none;
   border: none;
   color: var(--c-overlay0);
@@ -397,30 +423,50 @@ async function save() {
   border-radius: 4px;
   display: flex;
   align-items: center;
-  transition: color 0.15s, background 0.15s;
-}
-
-.icon-btn:hover {
-  color: var(--c-red, #e64553);
-  background: var(--c-surface0);
-}
-
-.expand-chevron {
-  color: var(--c-overlay0);
-  transition: transform 0.25s ease;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
 }
 
-.expand-chevron.expanded {
-  transform: rotate(180deg);
+.provider-tile:hover .tile-delete {
+  opacity: 1;
 }
 
-.provider-card-body {
-  padding: 4px 14px 14px;
+.tile-delete:hover {
+  color: var(--c-red, #e64553);
+  background: var(--c-surface1);
+}
+
+.add-tile {
+  border-style: dashed;
+  color: var(--c-subtext0);
+  justify-content: center;
+  gap: 6px;
+}
+
+.add-tile:hover {
+  color: var(--c-blue);
+  border-color: var(--c-blue);
+}
+
+.add-tile .tile-name {
+  color: inherit;
+  flex: none;
+}
+
+/* Provider detail panel */
+.provider-detail {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border-top: 1px solid var(--c-surface0);
+  padding: 14px;
+  border: 1px solid var(--c-surface1);
+  border-radius: 10px;
+  background: var(--c-surface0);
+}
+
+.provider-detail input {
+  background: var(--c-base);
 }
 
 .settings-body label {
@@ -571,30 +617,6 @@ async function save() {
   font-style: italic;
 }
 
-/* Add provider button */
-.add-provider-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 10px;
-  background: none;
-  border: 1px dashed var(--c-surface2);
-  border-radius: 10px;
-  color: var(--c-subtext0);
-  font-size: 0.85rem;
-  cursor: pointer;
-  font-family: inherit;
-  transition: color 0.2s, border-color 0.2s, background 0.2s;
-  flex-shrink: 0;
-}
-
-.add-provider-btn:hover {
-  color: var(--c-blue);
-  border-color: var(--c-blue);
-  background: var(--c-surface0);
-}
 
 .section-divider {
   border-top: 1px solid var(--c-surface0);

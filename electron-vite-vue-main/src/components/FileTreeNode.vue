@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref, onMounted, onUnmounted, nextTick, type Ref } from 'vue'
+import { inject, ref, computed, onMounted, onUnmounted, nextTick, type Ref, type ComputedRef } from 'vue'
 import type { FileReference } from '../types/workspace'
 
 const props = defineProps<{
@@ -20,6 +20,20 @@ const confirmNewItem = inject<() => void>('fileTree:confirmNewItem')!
 const onNewItemKeydown = inject<(e: KeyboardEvent) => void>('fileTree:onNewItemKeydown')!
 const lastClickedPath = inject<Ref<string | null>>('fileTree:lastClickedPath')!
 const allEntries = inject<Ref<FileEntry[]>>('fileTree:allEntries')!
+const activeEditorPath = inject<ComputedRef<string>>(
+  'fileTree:activeEditorPath',
+  computed(() => ''),
+)
+
+function normalizeFsPath(p: string) {
+  return p.replace(/\\/g, '/')
+}
+
+function isOpenInEditor(path: string) {
+  const open = activeEditorPath.value
+  if (!open) return false
+  return normalizeFsPath(path) === normalizeFsPath(open)
+}
 
 // ---- Rename state ----
 const renameState = ref<{ path: string; name: string } | null>(null)
@@ -179,8 +193,9 @@ function closeCtxMenu() {
 }
 
 function showInFolder() {
-  window.fsApi.showInFolder(ctxMenu.value.path)
+  const p = ctxMenu.value.path
   closeCtxMenu()
+  window.fsApi.showInFolder(p)
 }
 
 function isHtmlFile(filePath: string) {
@@ -189,17 +204,18 @@ function isHtmlFile(filePath: string) {
 }
 
 function previewHtml() {
-  previewHtmlFile(ctxMenu.value.path)
+  const p = ctxMenu.value.path
   closeCtxMenu()
+  previewHtmlFile(p)
 }
 
 async function deletePath() {
   const { path, name, isDirectory } = ctxMenu.value
+  closeCtxMenu()
   const confirmed = window.confirm(`确认将${isDirectory ? '文件夹' : '文件'}“${name}”移到回收站？`)
   if (!confirmed) return
 
   const { error } = await window.fsApi.deletePath(path)
-  closeCtxMenu()
 
   if (error) {
     window.alert(`删除失败：${error}`)
@@ -214,7 +230,12 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
   <template v-for="entry in entries" :key="entry.path">
     <div
       class="file-item"
-      :class="{ 'is-dir': entry.isDirectory, 'selected': selectedFiles.has(entry.path), 'drop-target': dropTargetDir === entry.path }"
+      :class="{
+        'is-dir': entry.isDirectory,
+        selected: selectedFiles.has(entry.path),
+        'editor-open': !entry.isDirectory && isOpenInEditor(entry.path),
+        'drop-target': dropTargetDir === entry.path,
+      }"
       :style="{ paddingLeft: 8 + (depth || 0) * 14 + 'px' }"
       draggable="true"
       @click="onFileClick($event, entry)"
@@ -320,8 +341,8 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 }
 
 .file-item.selected {
-  background: color-mix(in srgb, var(--c-blue) 15%, var(--c-chrome-bg));
-  color: var(--c-blue);
+  background: var(--c-chrome-selected-bg);
+  color: var(--c-text);
 }
 
 .file-item.selected .file-icon {
@@ -329,7 +350,17 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 }
 
 .file-item.selected .dir-icon {
-  color: var(--c-blue);
+  color: var(--c-yellow, #df8e1d);
+}
+
+/* 与主区域文件 tab 对应：当前正在编辑的文件 */
+.file-item.editor-open:not(.selected) {
+  background: var(--c-chrome-selected-bg);
+  color: var(--c-text);
+}
+
+.file-item.editor-open:not(.selected) .file-icon {
+  color: var(--c-green, #40a02b);
 }
 
 .file-item.drop-target {

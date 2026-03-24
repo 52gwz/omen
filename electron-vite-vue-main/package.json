@@ -46,6 +46,7 @@
     "markmap-view": "^0.18.12",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.1.0",
+    "simple-mind-map": "^0.14.0-fix.2",
     "tributejs": "^5.1.3"
   }
 }

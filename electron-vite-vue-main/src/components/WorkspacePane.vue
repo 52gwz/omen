@@ -131,7 +131,7 @@ function onFileRefDragLeave(event: DragEvent) {
   emit('fileRefDragLeave')
 }
 
-function onFileRefDrop(event: DragEvent) {
+function onFileRefDrop(event: DragEvent) {  
   if (!isFileRefDrag(event)) return
   if (!pane.value) return
   event.preventDefault()
@@ -593,6 +593,9 @@ onBeforeUnmount(() => {
               <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
               <polyline points="13 2 13 9 20 9" />
             </svg>
+            <svg v-else-if="isConversationTab(tab.convId)" class="conv-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            </svg>
             <span
               v-if="isConversationTab(tab.convId) && runningConvIds.has(tab.convId)"
               class="tab-running-dot"
@@ -837,6 +840,7 @@ onBeforeUnmount(() => {
 
 .tab-bar {
   flex-shrink: 0;
+  background: var(--c-tab-bar-bg);
   -webkit-app-region: drag;
 }
 
@@ -913,29 +917,37 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   font-size: 13px;
   line-height: 1.3;
-  color: color-mix(in srgb, var(--c-subtext0) 92%, var(--c-mantle));
+  background: var(--c-tab-inactive-bg);
+  color: var(--c-tab-inactive-text);
   transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
   flex-shrink: 0;
   user-select: none;
   border: none;
   border-top: 1px solid transparent;
-  border-right: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
+  border-right: 1px solid var(--c-tab-bar-bg);
   box-sizing: border-box;
   -webkit-app-region: no-drag;
   position: relative;
   z-index: 0;
 }
 
+.tab-item.active + .tab-item,
+.tab-item:has(+ .tab-item.active) {
+  border-right-color: transparent;
+}
+
+
 .tab-item:hover:not(.active) {
-  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
-  color: var(--c-text);
+  background: color-mix(in srgb, var(--c-tab-inactive-bg) 70%, var(--c-surface0) 30%);
+  color: var(--c-tab-active-text);
 }
 
 .tab-item.active {
   background: var(--c-base);
-  color: var(--c-text);
+  color: var(--c-tab-active-text);
   font-weight: 400;
   border-top: 1px solid var(--c-blue);
+  border-right-color: transparent;
   margin-bottom: -1px;
   padding-bottom: 1px;
   z-index: 1;
@@ -947,10 +959,16 @@ onBeforeUnmount(() => {
   box-shadow: 0 1px 0 #ffffff;
 }
 
+:root[data-theme="dark"] .tab-item.active {
+  background: #181818;
+  box-shadow: 0 1px 0 #181818;
+}
+
 .home-tab svg,
 .skills-tab svg,
 .webview-tab svg,
-.editor-tab svg {
+.editor-tab svg,
+.conv-tab-icon {
   color: var(--c-overlay0);
   flex-shrink: 0;
   transition: color 0.15s;
@@ -969,6 +987,11 @@ onBeforeUnmount(() => {
 .webview-tab.active svg,
 .webview-tab:hover svg {
   color: var(--c-teal, #179299);
+}
+
+.conv-tab.active .conv-tab-icon,
+.conv-tab:hover .conv-tab-icon {
+  color: var(--c-blue);
 }
 
 .editor-tab.active svg,
@@ -1041,19 +1064,17 @@ onBeforeUnmount(() => {
   min-height: 35px;
   border-radius: 0;
   border: none;
-  border-left: 1px solid color-mix(in srgb, var(--c-surface1) 40%, var(--c-mantle));
   background: transparent;
   color: var(--c-overlay0);
   cursor: pointer;
   flex-shrink: 0;
   align-self: stretch;
-  transition: color 0.12s, background 0.12s;
+  transition: color 0.12s;
   -webkit-app-region: no-drag;
 }
 
 .tab-add-btn:hover {
   color: var(--c-text);
-  background: color-mix(in srgb, var(--c-surface0) 35%, var(--c-mantle));
 }
 
 /* 内联模式：跟随在最后一个 tab 后面 */

@@ -165,9 +165,13 @@ watch(() => props.filePath, () => {
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  background: #fff;
+  background: var(--c-chrome-bg);
   border-bottom: 1px solid var(--c-surface0);
   flex-shrink: 0;
+}
+
+:root[data-theme="dark"] .webview-toolbar {
+  background: #1e1e1e;
 }
 
 .address-bar {
@@ -232,7 +236,7 @@ watch(() => props.filePath, () => {
   border: none;
   width: 100%;
   height: 100%;
-  background: #fff;
+  background: var(--c-base);
 }
 
 .webview-frame.no-pointer {

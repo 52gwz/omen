@@ -116,7 +116,18 @@ onBeforeUnmount(() => {
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: #fff;
+  background: var(--c-base);
+}
+
+/* markmap-view 默认浅色变量；与 data-theme 对齐，避免夜间模式白底 + 浅色字 */
+.mindmap-container :deep(.markmap) {
+  --markmap-text-color: var(--c-text);
+  --markmap-code-bg: var(--c-surface0);
+  --markmap-code-color: var(--c-subtext0);
+  --markmap-circle-open-bg: var(--c-base);
+  --markmap-a-color: var(--c-blue);
+  --markmap-a-hover-color: var(--c-blue);
+  --markmap-highlight-bg: color-mix(in srgb, var(--c-yellow) 40%, transparent);
 }
 
 .mindmap-toolbar {
@@ -129,7 +140,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--c-surface0);
   border-radius: 8px;
   padding: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 10px var(--c-shadow);
 }
 
 .mindmap-toolbar-btn {

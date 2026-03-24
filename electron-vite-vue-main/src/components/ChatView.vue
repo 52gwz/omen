@@ -1318,6 +1318,10 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference })
   padding-bottom: 0;
 }
 
+:root[data-theme="dark"] .assistant .message-bubble {
+  color: #fff;
+}
+
 /* Markdown rendered content */
 .markdown-body {
   line-height: 1.7;
