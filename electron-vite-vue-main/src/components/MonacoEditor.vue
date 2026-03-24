@@ -1,8 +1,13 @@
+<script lang="ts">
+const viewModeCache = new Map<string, 'edit' | 'preview' | 'mindmap'>()
+</script>
+
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, shallowRef, inject } from 'vue'
 import * as monaco from 'monaco-editor'
 import { marked } from 'marked'
 import MindMapView from './MindMapView.vue'
+import SimpleMindMapView from './SimpleMindMapView.vue'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
@@ -40,7 +45,7 @@ let resolvedWatchKey = ''
 let suppressExternalReloadUntil = 0
 let externalReloadTimer: ReturnType<typeof setTimeout> | null = null
 let offFileChanged: (() => void) | null = null
-const viewMode = ref<'edit' | 'preview' | 'mindmap'>('edit')
+const viewMode = ref<'edit' | 'preview' | 'mindmap'>(viewModeCache.get(props.filePath) || 'edit')
 const rawContent = ref('')
 const showSelectionToolbar = ref(false)
 const toolbarPos = ref({ top: 0, left: 0 })
@@ -94,6 +99,11 @@ const isMarkdown = computed(() => {
   return ext === 'md' || ext === 'markdown'
 })
 
+const isJson = computed(() => {
+  const ext = props.filePath.split('.').pop()?.toLowerCase()
+  return ext === 'json'
+})
+
 const renderedHtml = computed(() => {
   if (!isMarkdown.value || viewMode.value !== 'preview') return ''
   return marked.parse(rawContent.value, { async: false }) as string
@@ -106,8 +116,19 @@ function switchMode(mode: 'edit' | 'preview' | 'mindmap') {
   }
   viewMode.value = mode
   if (mode === 'edit') {
+    if (editor.value) {
+      const model = editor.value.getModel()
+      if (model && model.getValue() !== rawContent.value) {
+        model.setValue(rawContent.value)
+      }
+    }
     requestAnimationFrame(() => editor.value?.layout())
   }
+}
+
+function onMindMapContentUpdate(newContent: string) {
+  rawContent.value = newContent
+  modified.value = true
 }
 
 const EXT_LANG_MAP: Record<string, string> = {
@@ -171,9 +192,11 @@ async function loadFile(opts?: { silent?: boolean }) {
 }
 
 async function saveFile() {
-  if (!editor.value || saving.value) return
+  if (saving.value) return
   saving.value = true
-  const content = editor.value.getValue()
+  const content = viewMode.value === 'edit' && editor.value
+    ? editor.value.getValue()
+    : rawContent.value
   const result = await window.fsApi.writeFile(props.filePath, content)
   saving.value = false
   if (result.error) {
@@ -214,8 +237,12 @@ function dismissDiskStale() {
   diskStale.value = false
 }
 
+watch(viewMode, (mode) => {
+  viewModeCache.set(props.filePath, mode)
+})
+
 watch(() => props.filePath, async (newPath, oldPath) => {
-  viewMode.value = 'edit'
+  viewMode.value = viewModeCache.get(newPath) || 'edit'
   clearExternalReloadTimer()
   if (oldPath) await window.fsApi.unwatchFile(oldPath)
   const wr = await window.fsApi.watchFile(newPath)
@@ -228,6 +255,7 @@ watch(theme, (t) => {
 })
 
 onMounted(() => {
+  document.addEventListener('keydown', handleGlobalKeydown)
   if (!editorContainer.value) return
 
   editor.value = monaco.editor.create(editorContainer.value, {
@@ -252,7 +280,7 @@ onMounted(() => {
 
   editor.value.onDidChangeModelContent(() => {
     modified.value = true
-    if (isMarkdown.value) rawContent.value = editor.value!.getValue()
+    if (isMarkdown.value || isJson.value) rawContent.value = editor.value!.getValue()
   })
 
   editor.value.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -384,7 +412,15 @@ watch(() => props.filePath, () => {
   updateHighlightDecorations()
 })
 
+function handleGlobalKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && viewMode.value !== 'edit') {
+    e.preventDefault()
+    saveFile()
+  }
+}
+
 onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleGlobalKeydown)
   clearDeletionViewZones()
   clearExternalReloadTimer()
   if (offFileChanged) {
@@ -409,7 +445,7 @@ onBeforeUnmount(() => {
         <span v-if="modified" class="editor-modified-dot" title="未保存"></span>
       </div>
       <div class="editor-actions">
-        <div v-if="isMarkdown" class="md-mode-toggle">
+        <div v-if="isMarkdown || isJson" class="md-mode-toggle">
           <button
             class="mode-toggle-btn"
             :class="{ active: viewMode === 'edit' }"
@@ -422,6 +458,7 @@ onBeforeUnmount(() => {
             </svg>
           </button>
           <button
+            v-if="isMarkdown"
             class="mode-toggle-btn"
             :class="{ active: viewMode === 'preview' }"
             title="预览"
@@ -435,7 +472,7 @@ onBeforeUnmount(() => {
           <button
             class="mode-toggle-btn"
             :class="{ active: viewMode === 'mindmap' }"
-            title="思维导图"
+            :title="isJson ? '思维导图预览' : '思维导图'"
             @click="switchMode('mindmap')"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -469,8 +506,14 @@ onBeforeUnmount(() => {
     <div v-else-if="error" class="editor-error">
       <span>{{ error }}</span>
     </div>
-    <div v-if="isMarkdown && viewMode === 'preview'" class="md-preview" v-html="renderedHtml"></div>
-    <MindMapView v-if="isMarkdown && viewMode === 'mindmap'" :content="rawContent" :theme="theme" />
+    <div v-if="isMarkdown && viewMode === 'preview' && !loading" class="md-preview" v-html="renderedHtml"></div>
+    <MindMapView v-if="isMarkdown && viewMode === 'mindmap' && !loading" :content="rawContent" :theme="theme" />
+    <SimpleMindMapView
+      v-if="isJson && viewMode === 'mindmap' && !loading"
+      :content="rawContent"
+      :theme="theme"
+      @update:content="onMindMapContentUpdate"
+    />
     <div v-show="viewMode === 'edit'" ref="editorContainer" class="editor-container"></div>
   </div>
 </template>

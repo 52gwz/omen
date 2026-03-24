@@ -24,6 +24,7 @@ const activeEditorPath = inject<ComputedRef<string>>(
   'fileTree:activeEditorPath',
   computed(() => ''),
 )
+const onFileRenamed = inject<(oldPath: string, newPath: string) => void>('fileTree:onFileRenamed', () => {})
 
 function normalizeFsPath(p: string) {
   return p.replace(/\\/g, '/')
@@ -63,6 +64,7 @@ async function confirmRename() {
   if (!newName || newName === state.path.replace(/.*\//, '')) return
   const result = await window.fsApi.renamePath(state.path, newName)
   if (result.error) window.alert(`重命名失败：${result.error}`)
+  else if (result.newPath) onFileRenamed(state.path, result.newPath)
 }
 
 function onRenameKeydown(e: KeyboardEvent) {
@@ -148,6 +150,8 @@ async function onDirDrop(e: DragEvent, entry: FileEntry) {
       if (result.error) {
         window.alert(`移动失败: ${result.error}`)
         break
+      } else if (result.newPath) {
+        onFileRenamed(src, result.newPath)
       }
     }
   } catch {}

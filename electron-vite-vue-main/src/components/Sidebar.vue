@@ -23,6 +23,7 @@ const emit = defineEmits<{
   openSkills: []
   openFile: [filePath: string]
   previewHtml: [filePath: string]
+  fileRenamed: [oldPath: string, newPath: string]
 }>()
 
 const conversations = reactive<ConversationMeta[]>([])
@@ -242,6 +243,7 @@ provide('fileTree:dirChildren', dirChildren)
 provide('fileTree:toggleDir', toggleDir)
 provide('fileTree:openFile', (filePath: string) => emit('openFile', filePath))
 provide('fileTree:previewHtml', (filePath: string) => emit('previewHtml', filePath))
+provide('fileTree:onFileRenamed', (oldPath: string, newPath: string) => emit('fileRenamed', oldPath, newPath))
 provide('fileTree:selectedFiles', selectedFiles)
 provide('fileTree:toggleSelect', toggleFileSelect)
 provide('fileTree:createInDir', startCreateInDir)

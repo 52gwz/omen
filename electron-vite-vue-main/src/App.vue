@@ -510,6 +510,25 @@ function onOpenFile(filePath: string) {
   c.activePaneId = pane.id
 }
 
+function onFileRenamed(oldPath: string, newPath: string) {
+  const prefixes = [EDITOR_PREFIX, WEBVIEW_PREFIX]
+  for (const ctx of Object.values(tabContexts)) {
+    forEachPane(ctx.root, (pane) => {
+      for (const tab of pane.tabs) {
+        for (const prefix of prefixes) {
+          if (!tab.convId.startsWith(prefix)) continue
+          const tabPath = tab.convId.slice(prefix.length)
+          if (tabPath === oldPath) {
+            tab.convId = prefix + newPath
+          } else if (tabPath.startsWith(oldPath + '/')) {
+            tab.convId = prefix + newPath + tabPath.slice(oldPath.length)
+          }
+        }
+      }
+    })
+  }
+}
+
 function closeTab(paneId: string, idx: number) {
   const c = getCtx()
   const pane = findPaneById(c.root, paneId)
@@ -927,6 +946,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         @open-skills="openSkills"
         @open-file="onOpenFile"
         @preview-html="openWebView"
+        @file-renamed="onFileRenamed"
       />
 
       <div class="main-area">
