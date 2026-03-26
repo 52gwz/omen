@@ -1,5 +1,30 @@
 <script lang="ts">
-const viewModeCache = new Map<string, 'edit' | 'preview' | 'mindmap'>()
+const VIEW_MODE_STORAGE_KEY = 'omen-editor-view-mode-by-file'
+
+function loadViewModeCache(): Map<string, 'edit' | 'preview' | 'mindmap'> {
+  const map = new Map<string, 'edit' | 'preview' | 'mindmap'>()
+  try {
+    const raw = localStorage.getItem(VIEW_MODE_STORAGE_KEY)
+    if (!raw) return map
+    const obj = JSON.parse(raw) as Record<string, unknown>
+    for (const [path, v] of Object.entries(obj)) {
+      if (v === 'edit' || v === 'preview' || v === 'mindmap') map.set(path, v)
+    }
+  } catch {
+    /* ignore */
+  }
+  return map
+}
+
+function persistViewModeCache(map: Map<string, 'edit' | 'preview' | 'mindmap'>) {
+  try {
+    localStorage.setItem(VIEW_MODE_STORAGE_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch {
+    /* ignore */
+  }
+}
+
+const viewModeCache = loadViewModeCache()
 </script>
 
 <script setup lang="ts">
@@ -51,6 +76,7 @@ const showSelectionToolbar = ref(false)
 const toolbarPos = ref({ top: 0, left: 0 })
 let highlightDecorationIds: string[] = []
 let deletionViewZoneIds: string[] = []
+let suppressEditorContentChange = false
 
 const toolbarStyle = computed(() => ({
   top: `${toolbarPos.value.top}px`,
@@ -119,7 +145,12 @@ function switchMode(mode: 'edit' | 'preview' | 'mindmap') {
     if (editor.value) {
       const model = editor.value.getModel()
       if (model && model.getValue() !== rawContent.value) {
-        model.setValue(rawContent.value)
+        suppressEditorContentChange = true
+        try {
+          model.setValue(rawContent.value)
+        } finally {
+          suppressEditorContentChange = false
+        }
       }
     }
     requestAnimationFrame(() => editor.value?.layout())
@@ -127,6 +158,12 @@ function switchMode(mode: 'edit' | 'preview' | 'mindmap') {
 }
 
 function onMindMapContentUpdate(newContent: string) {
+  if (!newContent || typeof newContent !== 'string') return
+  try {
+    JSON.parse(newContent)
+  } catch {
+    return
+  }
   rawContent.value = newContent
   modified.value = true
 }
@@ -183,8 +220,13 @@ async function loadFile(opts?: { silent?: boolean }) {
   if (editor.value) {
     const model = editor.value.getModel()
     if (model) {
-      model.setValue(result.content)
-      monaco.editor.setModelLanguage(model, getLang(props.filePath))
+      suppressEditorContentChange = true
+      try {
+        model.setValue(result.content)
+        monaco.editor.setModelLanguage(model, getLang(props.filePath))
+      } finally {
+        suppressEditorContentChange = false
+      }
     }
     modified.value = false
     updateHighlightDecorations()
@@ -239,6 +281,7 @@ function dismissDiskStale() {
 
 watch(viewMode, (mode) => {
   viewModeCache.set(props.filePath, mode)
+  persistViewModeCache(viewModeCache)
 })
 
 watch(() => props.filePath, async (newPath, oldPath) => {
@@ -279,6 +322,7 @@ onMounted(() => {
   })
 
   editor.value.onDidChangeModelContent(() => {
+    if (suppressEditorContentChange) return
     modified.value = true
     if (isMarkdown.value || isJson.value) rawContent.value = editor.value!.getValue()
   })

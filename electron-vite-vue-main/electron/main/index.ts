@@ -5,8 +5,6 @@ import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
 import Store from 'electron-store'
-import { createOpenAI } from '@ai-sdk/openai'
-import { generateText } from 'ai'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -144,6 +142,18 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 // Disable GPU Acceleration for Windows 7
 if (os.release().startsWith('6.1')) app.disableHardwareAcceleration()
 
+// Ensure dev/prod can run simultaneously.
+// Electron single-instance lock is effectively tied to app name/userData,
+// so we split them between dev and packaged builds to avoid lock conflicts.
+const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
+const APP_NAME = 'Omen'
+app.setName(isDev ? `${APP_NAME}-Dev` : APP_NAME)
+
+// Isolate persisted data (electron-store, caches, etc.) between dev and prod.
+// Note: must be set before anything starts reading from userData.
+const isolatedUserData = path.join(app.getPath('userData'), isDev ? 'dev' : 'prod')
+app.setPath('userData', isolatedUserData)
+
 // Set application name for Windows 10+ notifications
 if (process.platform === 'win32') app.setAppUserModelId(app.getName())
 
@@ -276,14 +286,48 @@ ipcMain.handle('ai:models', async (_, opts?: { apiKey?: string; baseURL?: string
   }
 })
 
+/** 与 ai:chat-stream 一致：直连 OpenAI 兼容 /chat/completions，避免 AI SDK 拼 URL 与部分网关 404 不一致 */
+function extractChatCompletionText(json: unknown): string {
+  const root = json as { choices?: { message?: { content?: unknown } }[] }
+  const content = root?.choices?.[0]?.message?.content
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .map((part: { type?: string; text?: string }) => (part?.type === 'text' && part?.text ? part.text : ''))
+      .join('')
+  }
+  return content != null ? String(content) : ''
+}
+
 ipcMain.handle('ai:chat', async (_, payload: { model: string; messages: any[]; providerId?: string }) => {
   const { apiKey, baseURL } = getAiConfig(payload.providerId)
-  const provider = createOpenAI({ apiKey, baseURL })
-  const { text } = await generateText({
-    model: provider(payload.model),
-    messages: payload.messages as any,
+  const response = await fetch(`${baseURL}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: payload.model,
+      stream: false,
+      messages: payload.messages,
+    }),
   })
-  return text
+  const rawBody = await response.text()
+  if (!response.ok) {
+    const hint =
+      response.status === 404
+        ? '（404：请检查 Base URL 是否含 /v1 且与文档一致，例如 https://api.openai.com/v1）'
+        : ''
+    throw new Error(`API 请求失败 (${response.status}): ${rawBody.slice(0, 800)}${hint}`)
+  }
+  let json: unknown
+  try {
+    json = JSON.parse(rawBody)
+  } catch {
+    throw new Error('API 返回非 JSON 响应')
+  }
+  return extractChatCompletionText(json)
 })
 
 ipcMain.on('ai:chat-stream', async (event, payload: { requestId: string; model: string; messages: any[]; providerId?: string }) => {

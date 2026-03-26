@@ -12,7 +12,24 @@ const container = ref<HTMLDivElement>()
 const isDark = computed(() => props.theme === 'dark')
 let mm: Markmap | null = null
 let svgEl: SVGSVGElement | null = null
+let resizeObserver: ResizeObserver | null = null
+let resizeRaf = 0
 const transformer = new Transformer()
+
+function scheduleMarkmapFit() {
+  if (!mm) return
+  cancelAnimationFrame(resizeRaf)
+  resizeRaf = requestAnimationFrame(() => {
+    resizeRaf = 0
+    void mm!.fit().catch(() => {})
+  })
+}
+
+function ensureResizeObserver() {
+  if (resizeObserver || !container.value) return
+  resizeObserver = new ResizeObserver(() => scheduleMarkmapFit())
+  resizeObserver.observe(container.value)
+}
 
 function getColorScheme() {
   const style = getComputedStyle(document.documentElement)
@@ -67,6 +84,7 @@ function renderMap() {
 
   mm.setData(root)
   mm.fit()
+  ensureResizeObserver()
 }
 
 function fitToCanvas() {
@@ -86,6 +104,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(resizeRaf)
+  resizeRaf = 0
+  resizeObserver?.disconnect()
+  resizeObserver = null
   if (mm) {
     mm.destroy()
     mm = null

@@ -57,6 +57,10 @@ function ensureConvState() {
 const convState = ensureConvState()
 const messages: ChatMessage[] = convState.messages
 const isStreaming = toRef(convState, 'isStreaming')
+
+let msgIdCounter = 0
+function nextMsgId() { return `msg-${props.conversationId}-${msgIdCounter++}-${Date.now()}` }
+
 const inputText = ref('')
 const currentModel = ref('')
 const activeProviderId = ref('')
@@ -346,6 +350,7 @@ async function loadMessages() {
   messages.length = 0
   for (const m of stored) {
     const msg: ChatMessage = {
+      id: nextMsgId(),
       role: m.role as 'user' | 'assistant',
       content: m.content,
     }
@@ -440,7 +445,7 @@ function sendChatMessage(text: string) {
   const requestId = crypto.randomUUID()
   convState.currentRequestId = requestId
   convState.streamChatMode = 'chat'
-  messages.push({ role: 'assistant', content: '', reasoning: '' })
+  messages.push({ id: nextMsgId(), role: 'assistant', content: '', reasoning: '' })
   isStreaming.value = true
 
   const historyMessages: ApiMessage[] = messages.slice(0, -1).map((m) => ({
@@ -496,7 +501,7 @@ function sendAgentMessage(text: string) {
   const requestId = crypto.randomUUID()
   convState.currentRequestId = requestId
   convState.streamChatMode = 'agent'
-  messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
+  messages.push({ id: nextMsgId(), role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
   isStreaming.value = true
 
   const historyMessages: ApiMessage[] = messages.slice(0, -1).map((m) => ({
@@ -607,7 +612,7 @@ function sendAgentMessage(text: string) {
 
   const offNewTurn = window.agentChat.onNewTurn(({ requestId: rid }) => {
     if (rid !== requestId) return
-    messages.push({ role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
+    messages.push({ id: nextMsgId(), role: 'assistant', content: '', reasoning: '', toolCalls: [], agentRequestId: requestId })
     scrollToBottom()
   })
 
@@ -674,7 +679,7 @@ async function sendMessage() {
   const fullText = contextParts ? (text ? `${contextParts}\n\n${text}` : contextParts) : text
 
   const isFirstMessage = messages.length === 0
-  const msg: ChatMessage = { role: 'user', content: fullText }
+  const msg: ChatMessage = { id: nextMsgId(), role: 'user', content: fullText }
   if (images) msg.images = images
   messages.push(msg)
 
@@ -775,6 +780,45 @@ function copyMessage(msg: ChatMessage) {
   })
 }
 
+function exportConversation() {
+  if (!messages.length) return
+  const exported = {
+    conversationId: props.conversationId,
+    exportedAt: new Date().toISOString(),
+    messages: messages.map((m) => {
+      const out: Record<string, any> = {
+        role: m.role,
+        content: m.content,
+      }
+      if (m.reasoning) out.reasoning = m.reasoning
+      if (m.images?.length) out.imageCount = m.images.length
+      if (m.toolCalls?.length) {
+        out.toolCalls = m.toolCalls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+          status: tc.status,
+          result: tc.result,
+        }))
+      }
+      if (m.planSteps?.length) out.planSteps = m.planSteps
+      if (m.fileChanges?.length) out.fileChanges = m.fileChanges
+      if (m.changesUndone != null) out.changesUndone = m.changesUndone
+      if (m.agentRequestId) out.agentRequestId = m.agentRequestId
+      return out
+    }),
+  }
+  const json = JSON.stringify(exported, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const title = messages[0]?.content?.slice(0, 20)?.replace(/[/\\?%*:|"<>\n]/g, '_') || 'conversation'
+  a.download = `${title}_${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const editingIndex = ref<number | null>(null)
 const editingContent = ref('')
 const stashedFromIndex = ref<number | null>(null)
@@ -783,7 +827,7 @@ async function editMessage(index: number) {
   const msg = messages[index]
   if (!msg || msg.role !== 'user') return
 
-  for (let i = index + 1; i < messages.length; i++) {
+  for (let i = messages.length - 1; i > index; i--) {
     const m = messages[i]
     if (m.agentRequestId && m.fileChanges?.length && !m.changesUndone) {
       await window.agentChat.undoChanges(m.agentRequestId)
@@ -932,7 +976,7 @@ function insertCodeReference(_id: string, ref: CodeReference) {
   pendingCodeReferences.push(ref)
 }
 
-defineExpose({ loadConfig, sendWithContent, insertCodeReference })
+defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversation })
 </script>
 
 <template>
@@ -945,7 +989,7 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference })
 
       <div
         v-for="(msg, i) in messages"
-        :key="i"
+        :key="msg.id"
         class="message-row"
         :class="[msg.role, { stashed: stashedFromIndex !== null && i >= stashedFromIndex }]"
       >
@@ -1200,8 +1244,6 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference })
 :root:not([data-theme="dark"]) .chat-container {
   background: #ffffff;
 }
-
-
 
 .cwd-btn {
   display: inline-flex;

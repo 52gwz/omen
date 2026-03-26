@@ -529,8 +529,7 @@ function onFileRenamed(oldPath: string, newPath: string) {
   }
 }
 
-function closeTab(paneId: string, idx: number) {
-  const c = getCtx()
+function closeTabInContext(c: TabContext, paneId: string, idx: number) {
   const pane = findPaneById(c.root, paneId)
   if (!pane || idx < 0 || idx >= pane.tabs.length) return
   c.activePaneId = paneId
@@ -543,6 +542,53 @@ function closeTab(paneId: string, idx: number) {
   }
   pane.tabs.splice(idx, 1)
   normalizePaneAfterTabRemoval(pane, idx)
+}
+
+function closeTab(paneId: string, idx: number) {
+  closeTabInContext(getCtx(), paneId, idx)
+}
+
+function normalizeFsPath(p: string) {
+  return p.replace(/\\/g, '/')
+}
+
+function pathMatchesDeletion(tabPath: string, deletedPath: string, isDirectory: boolean) {
+  const t = normalizeFsPath(tabPath)
+  const d = normalizeFsPath(deletedPath)
+  if (t === d) return true
+  if (isDirectory && t.startsWith(d + '/')) return true
+  return false
+}
+
+function tabConvIdMatchesDeletion(convId: string, deletedPath: string, isDirectory: boolean) {
+  if (convId.startsWith(EDITOR_PREFIX)) {
+    return pathMatchesDeletion(convId.slice(EDITOR_PREFIX.length), deletedPath, isDirectory)
+  }
+  if (convId.startsWith(WEBVIEW_PREFIX)) {
+    const fp = convId.slice(WEBVIEW_PREFIX.length)
+    if (fp.startsWith('__blank_')) return false
+    return pathMatchesDeletion(fp, deletedPath, isDirectory)
+  }
+  return false
+}
+
+function onFileDeleted(deletedPath: string, isDirectory: boolean) {
+  for (const ctx of Object.values(tabContexts)) {
+    let again = true
+    while (again) {
+      again = false
+      forEachPane(ctx.root, (pane) => {
+        if (again) return
+        for (let idx = 0; idx < pane.tabs.length; idx++) {
+          if (tabConvIdMatchesDeletion(pane.tabs[idx].convId, deletedPath, isDirectory)) {
+            closeTabInContext(ctx, pane.id, idx)
+            again = true
+            break
+          }
+        }
+      })
+    }
+  }
 }
 
 function onConvTitleChange(convId: string, title: string) {
@@ -947,6 +993,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         @open-file="onOpenFile"
         @preview-html="openWebView"
         @file-renamed="onFileRenamed"
+        @file-deleted="onFileDeleted"
       />
 
       <div class="main-area">

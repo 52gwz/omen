@@ -25,6 +25,7 @@ const activeEditorPath = inject<ComputedRef<string>>(
   computed(() => ''),
 )
 const onFileRenamed = inject<(oldPath: string, newPath: string) => void>('fileTree:onFileRenamed', () => {})
+const onFileDeleted = inject<(path: string, isDirectory: boolean) => void>('fileTree:onFileDeleted', () => {})
 
 function normalizeFsPath(p: string) {
   return p.replace(/\\/g, '/')
@@ -223,6 +224,8 @@ async function deletePath() {
 
   if (error) {
     window.alert(`删除失败：${error}`)
+  } else {
+    onFileDeleted(path, isDirectory)
   }
 }
 

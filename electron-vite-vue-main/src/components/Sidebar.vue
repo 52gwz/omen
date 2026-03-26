@@ -24,6 +24,7 @@ const emit = defineEmits<{
   openFile: [filePath: string]
   previewHtml: [filePath: string]
   fileRenamed: [oldPath: string, newPath: string]
+  fileDeleted: [path: string, isDirectory: boolean]
 }>()
 
 const conversations = reactive<ConversationMeta[]>([])
@@ -244,6 +245,7 @@ provide('fileTree:toggleDir', toggleDir)
 provide('fileTree:openFile', (filePath: string) => emit('openFile', filePath))
 provide('fileTree:previewHtml', (filePath: string) => emit('previewHtml', filePath))
 provide('fileTree:onFileRenamed', (oldPath: string, newPath: string) => emit('fileRenamed', oldPath, newPath))
+provide('fileTree:onFileDeleted', (path: string, isDirectory: boolean) => emit('fileDeleted', path, isDirectory))
 provide('fileTree:selectedFiles', selectedFiles)
 provide('fileTree:toggleSelect', toggleFileSelect)
 provide('fileTree:createInDir', startCreateInDir)
@@ -383,12 +385,44 @@ function closeContextMenu() {
   contextMenu.value.visible = false
 }
 
+async function exportConversation(convId: string) {
+  const msgs = await window.conversationApi.getMessages(convId)
+  const conv = conversations.find(c => c.id === convId)
+  const exported = {
+    conversationId: convId,
+    title: conv?.title || '',
+    exportedAt: new Date().toISOString(),
+    messages: msgs.map((m: any) => {
+      const out: Record<string, any> = { role: m.role, content: m.content }
+      if (m.reasoning) out.reasoning = m.reasoning
+      if (m.images?.length) out.imageCount = m.images.length
+      if (m.toolCalls?.length) out.toolCalls = m.toolCalls
+      if (m.planSteps?.length) out.planSteps = m.planSteps
+      if (m.fileChanges?.length) out.fileChanges = m.fileChanges
+      if (m.changesUndone != null) out.changesUndone = m.changesUndone
+      if (m.agentRequestId) out.agentRequestId = m.agentRequestId
+      return out
+    }),
+  }
+  const json = JSON.stringify(exported, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const title = (conv?.title || 'conversation').slice(0, 20).replace(/[/\\?%*:|"<>\n]/g, '_')
+  a.download = `${title}_${new Date().toISOString().slice(0, 10)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 async function handleContextAction(action: string) {
   const { targetId, type } = contextMenu.value
   closeContextMenu()
   if (action === 'delete') {
     if (type === 'conv') await deleteConversation(targetId)
     else await deleteProject(targetId)
+  } else if (action === 'export' && type === 'conv') {
+    await exportConversation(targetId)
   }
 }
 
@@ -631,6 +665,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
         @mousedown.stop
       >
+        <button v-if="contextMenu.type === 'conv'" @click="handleContextAction('export')">导出对话</button>
         <button @click="handleContextAction('delete')">
           {{ contextMenu.type === 'project' ? '删除项目' : '删除对话' }}
         </button>

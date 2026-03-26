@@ -59,6 +59,7 @@ export class FileChangeTracker {
     const change = this.changes.get(filePath)
     if (change) {
       change.replacements.push({ oldString, newString, replaceAll })
+      if (newString === '') change.surgicalOk = false
     }
   }
 
