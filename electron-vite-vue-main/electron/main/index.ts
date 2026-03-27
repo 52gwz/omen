@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog, globalShortcut } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -199,6 +199,15 @@ async function createWindow() {
     if (url.startsWith('https:')) shell.openExternal(url)
     return { action: 'deny' }
   })
+
+  // 注册 Cmd+W 快捷键关闭当前标签页（仅窗口激活时生效）
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'w' && input.meta && !input.ctrl && !input.alt && !input.shift) {
+      event.preventDefault()
+      win.webContents.send('tab:close-current')
+    }
+  })
+
   // win.webContents.on('will-navigate', (event, url) => { }) #344
 }
 
@@ -970,4 +979,103 @@ ipcMain.handle('fs:unwatch-file', (_event, filePath: string) => {
       fileWatchDebounceTimers.delete(key)
     }
   }
+})
+
+// ---- File Search (cmd+p style) ----
+
+const IGNORED_DIRS = new Set([
+  'node_modules', '.git', '.svn', '.hg', '.idea', '.vscode',
+  'dist', 'dist-electron', 'build', 'out', '.next', '.nuxt',
+  '__pycache__', '.pytest_cache', 'venv', '.venv', 'env', '.env',
+  '.DS_Store', 'Thumbs.db', '.cache', '.npm', '.yarn',
+])
+
+const IGNORED_EXTENSIONS = new Set([
+  '.pyc', '.pyo', '.o', '.a', '.lib', '.dll', '.exe', '.so', '.dylib',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg', '.bmp',
+  '.woff', '.woff2', '.ttf', '.eot', '.otf',
+  '.zip', '.tar', '.gz', '.rar', '.7z', '.dmg', '.pkg',
+  '.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv', '.flv',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.lock', '.log',
+])
+
+function fuzzyMatch(text: string, pattern: string): boolean {
+  const textLower = text.toLowerCase()
+  const patternLower = pattern.toLowerCase()
+  
+  // Simple contains match
+  if (textLower.includes(patternLower)) return true
+  
+  // Fuzzy character match
+  let patternIdx = 0
+  for (let i = 0; i < textLower.length && patternIdx < patternLower.length; i++) {
+    if (textLower[i] === patternLower[patternIdx]) {
+      patternIdx++
+    }
+  }
+  return patternIdx === patternLower.length
+}
+
+function searchFilesRecursive(dirPath: string, pattern: string, results: { path: string; name: string; dir: string }[], limit: number) {
+  if (results.length >= limit) return
+  
+  try {
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    
+    for (const entry of entries) {
+      if (results.length >= limit) break
+      if (entry.name.startsWith('.')) continue
+      
+      const fullPath = path.join(dirPath, entry.name)
+      
+      if (entry.isDirectory()) {
+        if (IGNORED_DIRS.has(entry.name)) continue
+        searchFilesRecursive(fullPath, pattern, results, limit)
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase()
+        if (IGNORED_EXTENSIONS.has(ext)) continue
+        
+        if (fuzzyMatch(entry.name, pattern)) {
+          results.push({
+            path: fullPath,
+            name: entry.name,
+            dir: path.dirname(fullPath),
+          })
+        }
+      }
+    }
+  } catch {
+    // Ignore permission errors, etc.
+  }
+}
+
+ipcMain.handle('fs:search-files', async (_, dirPath: string, pattern: string): Promise<{ path: string; name: string; dir: string }[]> => {
+  const results: { path: string; name: string; dir: string }[] = []
+  const limit = 100
+  
+  try {
+    const stat = fs.statSync(dirPath)
+    if (!stat.isDirectory()) return []
+  } catch {
+    return []
+  }
+  
+  searchFilesRecursive(dirPath, pattern, results, limit)
+  
+  // Sort by relevance: exact match first, then by filename
+  results.sort((a, b) => {
+    const aName = a.name.toLowerCase()
+    const bName = b.name.toLowerCase()
+    const patternLower = pattern.toLowerCase()
+    
+    const aExact = aName === patternLower || aName.startsWith(patternLower)
+    const bExact = bName === patternLower || bName.startsWith(patternLower)
+    
+    if (aExact && !bExact) return -1
+    if (!aExact && bExact) return 1
+    return aName.localeCompare(bName)
+  })
+  
+  return results
 })

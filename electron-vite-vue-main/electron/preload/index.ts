@@ -289,6 +289,9 @@ contextBridge.exposeInMainWorld('fsApi', {
   renamePath(srcPath: string, newName: string): Promise<{ newPath: string; error?: string }> {
     return ipcRenderer.invoke('fs:rename-path', srcPath, newName)
   },
+  searchFiles(dirPath: string, pattern: string): Promise<{ path: string; name: string; dir: string }[]> {
+    return ipcRenderer.invoke('fs:search-files', dirPath, pattern)
+  },
 })
 
 // --------- Preload scripts loading ---------

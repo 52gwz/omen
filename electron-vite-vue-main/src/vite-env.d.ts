@@ -161,6 +161,7 @@ interface FsApi {
   createDir(dirPath: string): Promise<{ error?: string }>
   movePath(srcPath: string, destDir: string): Promise<{ newPath: string; error?: string }>
   renamePath(srcPath: string, newName: string): Promise<{ newPath: string; error?: string }>
+  searchFiles(dirPath: string, pattern: string): Promise<{ path: string; name: string; dir: string }[]>
 }
 
 interface WorkspaceApi {

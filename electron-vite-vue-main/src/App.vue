@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, provide, reactive, ref, watch } from 'vue'
 import ChatView from './components/ChatView.vue'
+import FileSearchDialog from './components/FileSearchDialog.vue'
 import SettingsPanel from './components/SettingsPanel.vue'
 import Sidebar from './components/Sidebar.vue'
 import WorkspacePane from './components/WorkspacePane.vue'
@@ -34,6 +35,7 @@ type DocumentWithViewTransition = Document & {
 const { theme, toggleTheme } = useTheme()
 
 const showSettings = ref(false)
+const showFileSearch = ref(false)
 const chatRefs = ref<Record<string, InstanceType<typeof ChatView>>>({})
 const sidebarRef = ref<InstanceType<typeof Sidebar>>()
 
@@ -203,6 +205,30 @@ onMounted(async () => {
   watch(() => tabContexts, debouncedSave, { deep: true })
   watch(activeProject, debouncedSave)
 })
+
+// Global keyboard shortcuts
+onMounted(() => {
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    // Cmd+P or Ctrl+P to open file search
+    if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+      e.preventDefault()
+      showFileSearch.value = true
+    }
+  }
+  window.addEventListener('keydown', handleGlobalKeydown)
+
+  // 监听主进程发来的关闭当前标签页事件
+  window.ipcRenderer.on('tab:close-current', () => {
+    const activePaneVal = getActivePane()
+    if (activePaneVal) {
+      closeTab(activePaneVal.id, activePaneVal.activeTabIdx)
+    }
+  })
+})
+
+function onFileSearchSelect(filePath: string) {
+  onOpenFile(filePath)
+}
 
 function getCtx(): TabContext {
   return ensureCtx(ctxKey.value)
@@ -1033,6 +1059,13 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         />
 
         <SettingsPanel v-if="showSettings" @close="onSettingsClose" />
+        
+        <FileSearchDialog
+          :visible="showFileSearch"
+          :project-path="activeProject?.path || null"
+          @close="showFileSearch = false"
+          @select-file="onFileSearchSelect"
+        />
       </div>
     </div>
   </div>
