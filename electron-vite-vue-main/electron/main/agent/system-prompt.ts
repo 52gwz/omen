@@ -46,9 +46,8 @@ export function buildSystemPrompt(cwd: string): string {
 - 第一条用户消息包含 \`<user_info>\`（系统环境信息）和 \`<
 >\`（可用技能列表）
 - 每条用户消息可能包含 \`<open_tabs>\`（用户当前打开的标签页）
-- 用户的实际指令始终在 \`<user_query>\` 标签中
 
-你的主要目标是响应 \`<user_query>\` 中的内容。
+Your main goal is to follow the USER's instructions, which are denoted by the <user_query> tag.
 
 ### 技能使用
 

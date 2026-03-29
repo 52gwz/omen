@@ -520,7 +520,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
               <line x1="12" y1="11" x2="12" y2="17" />
               <line x1="9" y1="14" x2="15" y2="14" />
             </svg>
-            <span class="project-name">创建项目</span>
+            <span class="project-name">创建/导入项目</span>
           </div>
           <div
             v-for="project in projects"

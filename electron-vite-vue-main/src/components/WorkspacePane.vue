@@ -6,6 +6,7 @@ import SkillsTab from './SkillsTab.vue'
 import WebViewTab from './WebViewTab.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { MIN_SPLIT_RATIO } from '../types/workspace'
+import { getFileIcon } from '../utils/fileIcons'
 import type { DragTabState, DropPosition, DropTarget, PaneNode, PaneSplitNode, PaneState, TabInfo, TabInsertTarget } from '../types/workspace'
 
 defineOptions({ name: 'WorkspacePane' })
@@ -589,10 +590,7 @@ onBeforeUnmount(() => {
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
             </svg>
-            <svg v-else-if="tab.convId.startsWith(editorPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-              <polyline points="13 2 13 9 20 9" />
-            </svg>
+            <img v-else-if="tab.convId.startsWith(editorPrefix)" :src="getFileIcon(tab.convId.slice(editorPrefix.length))" width="14" height="14" alt="file icon" />
             <svg v-else-if="isConversationTab(tab.convId)" class="conv-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
             </svg>
@@ -646,6 +644,22 @@ onBeforeUnmount(() => {
               :class="{ active: node.pane.activeTabIdx === idx }"
               @click="selectFromList(idx)"
             >
+              <svg v-if="!tab.convId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+              <svg v-else-if="tab.convId === skillsTabId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+              <svg v-else-if="tab.convId.startsWith(webviewPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="2" y1="12" x2="22" y2="12" />
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+              <img v-else-if="tab.convId.startsWith(editorPrefix)" :src="getFileIcon(tab.convId.slice(editorPrefix.length))" width="14" height="14" alt="file icon" />
+              <svg v-else-if="isConversationTab(tab.convId)" class="conv-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
               <span class="tab-list-label">{{ getTabLabel(tab) }}</span>
               <button class="tab-list-close" @click.stop="emit('closeTab', node.pane.id, idx)">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">

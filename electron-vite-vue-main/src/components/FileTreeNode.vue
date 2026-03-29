@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { inject, ref, computed, onMounted, onUnmounted, nextTick, type Ref, type ComputedRef } from 'vue'
 import type { FileReference } from '../types/workspace'
+import { getFileIcon } from '../utils/fileIcons'
 
 const props = defineProps<{
   entries: FileEntry[]
@@ -260,16 +261,23 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
-        <svg class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
+        <img 
+          class="file-icon dir-icon" 
+          width="13" 
+          height="13" 
+          :src="getFileIcon(entry.name, true, expandedDirs.has(entry.path))"
+          alt="folder"
+        />
       </template>
       <template v-else>
         <span class="tree-indent"></span>
-        <svg class="file-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
+        <img 
+          class="file-icon" 
+          width="13" 
+          height="13" 
+          :src="getFileIcon(entry.name)"
+          alt="file"
+        />
       </template>
       <span v-if="renameState?.path === entry.path" class="rename-input-wrap" @click.stop>
         <input
@@ -284,13 +292,22 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
 
     <template v-if="entry.isDirectory && expandedDirs.has(entry.path)">
       <div v-if="newItemState && newItemState.parentDir === entry.path" class="new-item-row" :style="{ paddingLeft: 8 + ((depth || 0) + 1) * 14 + 'px' }">
-        <svg v-if="newItemState.type === 'dir'" class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-        <svg v-else class="file-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
+        <img 
+          v-if="newItemState.type === 'dir'"
+          class="file-icon dir-icon" 
+          width="13" 
+          height="13" 
+          :src="getFileIcon(newItemState.name, true)"
+          alt="folder"
+        />
+        <img 
+          v-else
+          class="file-icon" 
+          width="13" 
+          height="13" 
+          :src="getFileIcon(newItemState.name)"
+          alt="file"
+        />
         <input
           v-model="newItemState.name"
           class="new-item-input"

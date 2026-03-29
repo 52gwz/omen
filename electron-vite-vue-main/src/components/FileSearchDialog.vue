@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { getFileIcon } from '../utils/fileIcons'
 
 const props = defineProps<{
   visible: boolean
@@ -133,10 +134,7 @@ onUnmounted(() => {
               @click="selectFile(item.path)"
               @mouseenter="selectedIndex = idx"
             >
-              <svg class="file-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                <polyline points="13 2 13 9 20 9" />
-              </svg>
+              <img class="file-icon" :src="getFileIcon(item.name)" width="14" height="14" alt="file icon" />
               <span class="file-name">{{ item.name }}</span>
               <span class="file-dir">{{ item.dir }}</span>
             </li>
