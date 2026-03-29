@@ -528,7 +528,7 @@ ipcMain.on('agent:start', async (event, payload: {
 ipcMain.handle('dialog:select-directory', async () => {
   if (!win) return null
   const result = await dialog.showOpenDialog(win, {
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'createDirectory'],
   })
   if (result.canceled || !result.filePaths.length) return null
   return result.filePaths[0]

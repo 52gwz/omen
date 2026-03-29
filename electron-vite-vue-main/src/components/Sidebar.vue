@@ -381,6 +381,11 @@ function onProjectContext(e: MouseEvent, projectId: string) {
   contextMenu.value = { visible: true, x: e.clientX, y: e.clientY, targetId: projectId, type: 'project' }
 }
 
+function onProjectRootContext(e: MouseEvent) {
+  e.preventDefault()
+  contextMenu.value = { visible: true, x: e.clientX, y: e.clientY, targetId: '', type: 'project-root' }
+}
+
 function closeContextMenu() {
   contextMenu.value.visible = false
 }
