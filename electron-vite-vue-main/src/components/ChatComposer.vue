@@ -733,7 +733,7 @@ defineExpose({
   border-radius: 10px;
   padding: 4px;
   box-shadow: 0 8px 24px var(--c-shadow-heavy);
-  z-index: 100;
+  z-index: 1200;
 }
 
 .model-dropdown-empty {
@@ -857,7 +857,7 @@ defineExpose({
   border-radius: 10px;
   padding: 4px;
   box-shadow: 0 8px 24px var(--c-shadow-heavy);
-  z-index: 100;
+  z-index: 1200;
 }
 
 .mode-option {

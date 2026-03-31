@@ -123,6 +123,21 @@ interface ConversationApi {
   saveMessages(convId: string, messages: StoredMessage[]): Promise<void>
   setCwd(convId: string, cwd: string): Promise<void>
   getCwd(convId: string): Promise<string>
+  getEditState(convId: string): Promise<{
+    editingIndex: number
+    editingContent: string
+    stashedFromIndex: number | null
+    shouldRestoreOnCancel: boolean
+  } | null>
+  setEditState(
+    convId: string,
+    editState: {
+      editingIndex: number
+      editingContent: string
+      stashedFromIndex: number | null
+      shouldRestoreOnCancel: boolean
+    } | null,
+  ): Promise<void>
 }
 
 interface FileEntry {
@@ -148,6 +163,7 @@ interface SkillsApi {
 interface FsApi {
   readDir(dirPath: string): Promise<FileEntry[]>
   deletePath(targetPath: string): Promise<{ error?: string }>
+  deletePaths(paths: string[]): Promise<{ cancelled?: boolean; errors: string[] }>
   showInFolder(fullPath: string): Promise<void>
   watchDir(dirPath: string): Promise<void>
   unwatchDir(dirPath: string): Promise<void>
@@ -169,6 +185,28 @@ interface WorkspaceApi {
   load(): Promise<any>
 }
 
+interface TerminalApi {
+  start(payload: { id: string; cwd?: string; cols?: number; rows?: number }): Promise<{ id: string; cwd: string; history: string }>
+  write(id: string, data: string): Promise<void>
+  resize(id: string, cols: number, rows: number): Promise<void>
+  kill(id: string): Promise<void>
+  onData(callback: (data: { id: string; chunk: string }) => void): () => void
+  onExit(callback: (data: { id: string; exitCode: number }) => void): () => void
+}
+
+interface WindowMonitorSource {
+  id: string
+  name: string
+  displayId: string
+  thumbnailDataUrl: string
+  appIconDataUrl?: string
+}
+
+interface WindowMonitorApi {
+  list(query?: string): Promise<WindowMonitorSource[]>
+  capture(payload: { sourceId: string; width?: number; height?: number }): Promise<{ dataUrl: string; error?: string }>
+}
+
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
   aiChat: AiChatApi
@@ -179,4 +217,6 @@ interface Window {
   skillsApi: SkillsApi
   fsApi: FsApi
   workspaceApi: WorkspaceApi
+  terminalApi: TerminalApi
+  windowMonitorApi: WindowMonitorApi
 }

@@ -1,15 +1,13 @@
 ---
 name: simple-mind-map-json
-description: 思维导图 JSON 文件的创建与编辑规范。当 Agent 需要新建或修改 `.json` 思维导图文件（用于 SimpleMindMapView / simple-mind-map 预览）时，必须遵循此 skill 以生成符合校验规则的数据结构。触发关键词：思维导图、脑图、mind map、mindmap、SimpleMindMap、JSON 思维导图。
+description: 思维导图 JSON 文件的创建与编辑规范。当需要新建或修改 `.json` 思维导图文件时，必须遵循此 skill 以生成符合校验规则的数据结构。触发关键词：思维导图、脑图、mind map、mindmap。
 ---
 
 # SimpleMindMap JSON 创建与编辑规范
 
 ## 概述
 
-在本项目的编辑器中，`.json` 文件可切换到思维导图预览模式（`SimpleMindMapView`），底层使用 [simple-mind-map](https://github.com/wanglin2/mind-map) 库渲染。
-
-**Markdown（`.md`）的思维导图用的是 markmap，格式完全不同，不可混用。**
+在编辑器中，`.json` 文件可切换到思维导图预览模式，底层使用 [simple-mind-map](https://github.com/wanglin2/mind-map) 库渲染。
 
 ## 校验规则
 
@@ -18,8 +16,6 @@ description: 思维导图 JSON 文件的创建与编辑规范。当 Agent 需要
 1. 文件内容是**合法 JSON**（双引号、无尾逗号、UTF-8）
 2. 根对象包含 **`data`** 属性，且 **`data.text` 为字符串**
 3. 子节点放在 **`children`** 数组中，每项递归遵循同样结构
-
-不满足时预览区报错：「JSON 解析失败」或「需包含 data.text」。
 
 ## 节点结构
 

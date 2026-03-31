@@ -12,6 +12,8 @@ import type { CodeReference, DragTabState, DropPosition, DropTarget, FileReferen
 const SKILLS_TAB_ID = '__skills__'
 const WEBVIEW_PREFIX = '__webview__:'
 const EDITOR_PREFIX = '__editor__:'
+const TERMINAL_PREFIX = '__terminal__:'
+const MONITOR_PREFIX = '__monitor__:'
 
 interface TabContext {
   root: PaneNode
@@ -33,6 +35,7 @@ type DocumentWithViewTransition = Document & {
 }
 
 const { theme, toggleTheme } = useTheme()
+const isDevBuild = import.meta.env.DEV
 
 const showSettings = ref(false)
 const showFileSearch = ref(false)
@@ -239,6 +242,8 @@ function isConversationTab(convId: string): boolean {
     && convId !== SKILLS_TAB_ID
     && !convId.startsWith(WEBVIEW_PREFIX)
     && !convId.startsWith(EDITOR_PREFIX)
+    && !convId.startsWith(TERMINAL_PREFIX)
+    && !convId.startsWith(MONITOR_PREFIX)
 }
 
 function findPaneById(node: PaneNode, paneId: string): PaneState | null {
@@ -260,13 +265,15 @@ function getActivePane(ctx = getCtx()): PaneState {
   return fallback
 }
 
-type TabCategory = 'conversation' | 'editor' | 'webview' | 'skills' | 'home'
+type TabCategory = 'conversation' | 'editor' | 'webview' | 'terminal' | 'monitor' | 'skills' | 'home'
 
 function getTabCategory(convId: string): TabCategory {
   if (!convId) return 'home'
   if (convId === SKILLS_TAB_ID) return 'skills'
   if (convId.startsWith(WEBVIEW_PREFIX)) return 'webview'
   if (convId.startsWith(EDITOR_PREFIX)) return 'editor'
+  if (convId.startsWith(TERMINAL_PREFIX)) return 'terminal'
+  if (convId.startsWith(MONITOR_PREFIX)) return 'monitor'
   return 'conversation'
 }
 
@@ -360,6 +367,12 @@ function normalizePaneAfterTabRemoval(pane: PaneState, removedIdx: number) {
   }
 }
 
+function disposeTabResources(convId: string) {
+  if (convId.startsWith(TERMINAL_PREFIX)) {
+    void window.terminalApi.kill(convId.slice(TERMINAL_PREFIX.length))
+  }
+}
+
 function removePaneIfPossible(ctx: TabContext, paneId: string): boolean {
   if (countPanes(ctx.root) <= 1) return false
   const removed = removePaneAt(ctx.root, paneId)
@@ -444,6 +457,7 @@ const activeEditorFilePath = computed(() => {
 })
 
 const sidebarActiveConvId = computed(() => isConversationTab(activeConvId.value) ? activeConvId.value : '')
+const isSkillsMenuActive = computed(() => activeConvId.value === SKILLS_TAB_ID)
 
 watch([ctxKey, sidebarActiveConvId], () => {
   nextTick(() => sidebarRef.value?.setActiveConv(sidebarActiveConvId.value))
@@ -497,6 +511,8 @@ function addNewTab(paneId?: string) {
 }
 
 let blankWebviewCounter = 0
+let terminalTabCounter = 0
+let monitorTabCounter = 0
 
 function addNewWebviewTab(paneId?: string) {
   const blankId = `__blank_${Date.now()}_${blankWebviewCounter++}`
@@ -508,10 +524,37 @@ function addNewWebviewTab(paneId?: string) {
   c.activePaneId = pane.id
 }
 
+function addNewTerminalTab(paneId?: string) {
+  const terminalId = `${Date.now()}_${terminalTabCounter++}`
+  const c = getCtx()
+  const pane = paneId ? findPaneById(c.root, paneId) : getActivePane(c)
+  if (!pane) return
+  pane.tabs.push(createTab(TERMINAL_PREFIX + terminalId))
+  pane.activeTabIdx = pane.tabs.length - 1
+  c.activePaneId = pane.id
+}
+
+function addNewMonitorTab(paneId?: string) {
+  const monitorId = `${Date.now()}_${monitorTabCounter++}`
+  const c = getCtx()
+  const pane = paneId ? findPaneById(c.root, paneId) : getActivePane(c)
+  if (!pane) return
+  pane.tabs.push(createTab(MONITOR_PREFIX + monitorId))
+  pane.activeTabIdx = pane.tabs.length - 1
+  c.activePaneId = pane.id
+}
+
+function openTerminal() {
+  const c = getCtx()
+  const pane = findBestPaneForCategory(c, 'terminal')
+  addNewTerminalTab(pane.id)
+}
+
 function openSkills() {
   if (focusExistingTab(SKILLS_TAB_ID)) return
   const c = getCtx()
   const pane = findBestPaneForCategory(c, 'skills')
+  disposeTabResources(pane.tabs[pane.activeTabIdx].convId)
   pane.tabs[pane.activeTabIdx].convId = SKILLS_TAB_ID
   c.activePaneId = pane.id
 }
@@ -559,6 +602,8 @@ function closeTabInContext(c: TabContext, paneId: string, idx: number) {
   const pane = findPaneById(c.root, paneId)
   if (!pane || idx < 0 || idx >= pane.tabs.length) return
   c.activePaneId = paneId
+  const removedConvId = pane.tabs[idx].convId
+  disposeTabResources(removedConvId)
   if (pane.tabs.length <= 1) {
     if (!removePaneIfPossible(c, paneId)) {
       pane.tabs[0].convId = ''
@@ -624,6 +669,7 @@ function onConvTitleChange(convId: string, title: string) {
 
 function onNoSelection() {
   const pane = getActivePane()
+  disposeTabResources(pane.tabs[pane.activeTabIdx].convId)
   pane.tabs[pane.activeTabIdx].convId = ''
 }
 
@@ -989,6 +1035,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
           </svg>
         </button>
       </div>
+      <div v-if="isDevBuild" class="titlebar-dev-badge">测试开发版</div>
       <div class="titlebar-right">
         <button class="titlebar-icon-btn" title="设置" @click="showSettings = true">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1008,6 +1055,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
         :project-name="activeProject?.name"
         :project-path="activeProject?.path"
         :active-editor-file-path="activeEditorFilePath"
+        :is-skills-active="isSkillsMenuActive"
         @select-conversation="onSelectConversation"
         @no-selection="onNoSelection"
         @delete-conversation="onDeleteConversation"
@@ -1037,10 +1085,15 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
           :skills-tab-id="SKILLS_TAB_ID"
           :webview-prefix="WEBVIEW_PREFIX"
           :editor-prefix="EDITOR_PREFIX"
+          :terminal-prefix="TERMINAL_PREFIX"
+          :monitor-prefix="MONITOR_PREFIX"
+          :project-path="activeProject?.path"
           @focus-pane="focusPane"
           @switch-tab="switchTab"
           @add-tab="addNewTab"
           @add-webview-tab="addNewWebviewTab"
+          @add-terminal-tab="addNewTerminalTab"
+          @add-monitor-tab="addNewMonitorTab"
           @close-tab="closeTab"
           @tab-drag-start="onTabDragStart"
           @tab-drag-end="onTabDragEnd"
@@ -1052,6 +1105,7 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
           @title-change="onConvTitleChange"
           @set-chat-ref="setChatRef"
           @welcome-send="handleWelcomeSend"
+          @open-project="onOpenProject"
           @split-resize-start="onSplitResizeStart"
           @split-resize-end="onSplitResizeEnd"
           @split-resize="onSplitResize"
@@ -1096,6 +1150,25 @@ async function handleWelcomeSend(payload: WelcomeSendPayload) {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.titlebar-dev-badge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--c-blue) 35%, var(--c-surface1));
+  background: color-mix(in srgb, var(--c-blue) 12%, var(--c-titlebar-bg));
+  color: var(--c-blue);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  -webkit-app-region: no-drag;
+  pointer-events: none;
 }
 
 .titlebar-right {

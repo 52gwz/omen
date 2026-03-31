@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted, nextTick, computed, watch, inject, toRef, type Ref } from 'vue'
+import { ref, reactive, onBeforeUnmount, onMounted, nextTick, computed, watch, inject, toRef, type Ref } from 'vue'
 import { marked } from 'marked'
 import ChatComposer from './ChatComposer.vue'
 import ToolCallCard from './ToolCallCard.vue'
@@ -94,6 +94,7 @@ function scrollReasoningToBottom(idx: number) {
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let loadMessagesPromise: Promise<void> | null = null
+let editStateSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const canSend = computed(() => (Boolean(inputText.value.trim()) || pendingImages.length > 0 || pendingCodeReferences.length > 0 || pendingFileReferences.length > 0) && !isStreaming.value && !!currentModel.value)
 
@@ -720,6 +721,13 @@ function stopGeneration() {
   }
 }
 
+async function waitForStreamingToStop(timeoutMs = 4000) {
+  const start = Date.now()
+  while (isStreaming.value && Date.now() - start < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 60))
+  }
+}
+
 function confirmTool(toolCallId: string) {
   window.agentChat.confirmTool(convState.currentRequestId, toolCallId)
 }
@@ -822,11 +830,43 @@ function exportConversation() {
 const editingIndex = ref<number | null>(null)
 const editingContent = ref('')
 const stashedFromIndex = ref<number | null>(null)
+const shouldRestoreOnCancel = ref(false)
+const editConflictDialogVisible = ref(false)
+const editConflictTargetIndex = ref<number | null>(null)
+const editConflictChangeCount = ref(0)
+const editConflictTurnCount = ref(0)
 
-async function editMessage(index: number) {
-  const msg = messages[index]
-  if (!msg || msg.role !== 'user') return
+type PersistedEditState = {
+  editingIndex: number
+  editingContent: string
+  stashedFromIndex: number | null
+  shouldRestoreOnCancel: boolean
+}
 
+function collectEditConflicts(index: number) {
+  const conflictIndexes: number[] = []
+  let fileChangeCount = 0
+  for (let i = index + 1; i < messages.length; i++) {
+    const m = messages[i]
+    if (m.agentRequestId && m.fileChanges?.length && !m.changesUndone) {
+      conflictIndexes.push(i)
+      fileChangeCount += m.fileChanges.length
+    }
+  }
+  return { conflictIndexes, fileChangeCount }
+}
+
+function startInlineEdit(index: number, restoreOnCancel: boolean) {
+  stashedFromIndex.value = index + 1
+  shouldRestoreOnCancel.value = restoreOnCancel
+  editingIndex.value = index
+  editingContent.value = messages[index].content
+  nextTick(() => {
+    editComposerRef.value?.focusInput()
+  })
+}
+
+async function undoChangesAfterIndex(index: number) {
   for (let i = messages.length - 1; i > index; i--) {
     const m = messages[i]
     if (m.agentRequestId && m.fileChanges?.length && !m.changesUndone) {
@@ -834,13 +874,44 @@ async function editMessage(index: number) {
       for (const f of m.fileChanges) fileHighlights.delete(f.filePath)
     }
   }
+}
 
-  stashedFromIndex.value = index + 1
-  editingIndex.value = index
-  editingContent.value = msg.content
-  nextTick(() => {
-    editComposerRef.value?.focusInput()
-  })
+function closeEditConflictDialog() {
+  editConflictDialogVisible.value = false
+  editConflictTargetIndex.value = null
+  editConflictChangeCount.value = 0
+  editConflictTurnCount.value = 0
+}
+
+async function editMessage(index: number) {
+  const msg = messages[index]
+  if (!msg || msg.role !== 'user') return
+
+  const { conflictIndexes, fileChangeCount } = collectEditConflicts(index)
+  if (conflictIndexes.length > 0) {
+    editConflictTargetIndex.value = index
+    editConflictChangeCount.value = fileChangeCount
+    editConflictTurnCount.value = conflictIndexes.length
+    editConflictDialogVisible.value = true
+    return
+  }
+
+  startInlineEdit(index, false)
+}
+
+async function editWithUndo() {
+  const targetIndex = editConflictTargetIndex.value
+  if (targetIndex === null) return
+  await undoChangesAfterIndex(targetIndex)
+  closeEditConflictDialog()
+  startInlineEdit(targetIndex, true)
+}
+
+function editWithoutUndo() {
+  const targetIndex = editConflictTargetIndex.value
+  if (targetIndex === null) return
+  closeEditConflictDialog()
+  startInlineEdit(targetIndex, false)
 }
 
 async function restoreStash() {
@@ -857,21 +928,34 @@ async function restoreStash() {
   }
 
   stashedFromIndex.value = null
+  shouldRestoreOnCancel.value = false
   editingIndex.value = null
+  void window.conversationApi.setEditState(props.conversationId, null)
   scheduleSave()
   scrollToBottom(true)
 }
 
-function confirmEdit() {
+async function confirmEdit() {
   const idx = editingIndex.value
   if (idx === null) return
   const text = editingContent.value.trim()
   if (!text) { cancelEdit(); return }
 
+  if (isStreaming.value) {
+    stopGeneration()
+    await waitForStreamingToStop()
+    if (isStreaming.value) {
+      errorMsg.value = '正在停止当前对话，请稍后再试'
+      return
+    }
+  }
+
   if (stashedFromIndex.value !== null) {
     messages.splice(stashedFromIndex.value)
   }
   stashedFromIndex.value = null
+  shouldRestoreOnCancel.value = false
+  void window.conversationApi.setEditState(props.conversationId, null)
 
   const msg = messages[idx]
   msg.content = text
@@ -890,28 +974,53 @@ function confirmEdit() {
 }
 
 function cancelEdit() {
-  if (stashedFromIndex.value !== null) {
+  if (stashedFromIndex.value !== null && shouldRestoreOnCancel.value) {
     restoreStash()
   } else {
+    stashedFromIndex.value = null
+    shouldRestoreOnCancel.value = false
     editingIndex.value = null
+    void window.conversationApi.setEditState(props.conversationId, null)
   }
 }
 
-// 点击外部区域退出编辑
-function handleClickOutsideEdit(e: MouseEvent) {
-  if (editingIndex.value === null) return
-  const editEl = document.querySelector('.edit-inline')
-  if (editEl && !editEl.contains(e.target as Node)) {
-    cancelEdit()
-  }
+function scheduleSaveEditState() {
+  if (editStateSaveTimer) clearTimeout(editStateSaveTimer)
+  editStateSaveTimer = setTimeout(() => {
+    if (editingIndex.value === null) {
+      window.conversationApi.setEditState(props.conversationId, null)
+      return
+    }
+    const state: PersistedEditState = {
+      editingIndex: editingIndex.value,
+      editingContent: editingContent.value,
+      stashedFromIndex: stashedFromIndex.value,
+      shouldRestoreOnCancel: shouldRestoreOnCancel.value,
+    }
+    window.conversationApi.setEditState(props.conversationId, state)
+  }, 250)
 }
 
-onMounted(() => {
-  document.addEventListener('click', handleClickOutsideEdit)
-})
+async function restoreEditState() {
+  const state = await window.conversationApi.getEditState(props.conversationId)
+  if (!state) return
+  const idx = state.editingIndex
+  const msg = messages[idx]
+  if (!msg || msg.role !== 'user') {
+    await window.conversationApi.setEditState(props.conversationId, null)
+    return
+  }
+  editingIndex.value = idx
+  editingContent.value = typeof state.editingContent === 'string' ? state.editingContent : msg.content
+  stashedFromIndex.value = typeof state.stashedFromIndex === 'number' ? state.stashedFromIndex : idx + 1
+  shouldRestoreOnCancel.value = !!state.shouldRestoreOnCancel
+  nextTick(() => {
+    editComposerRef.value?.focusInput()
+  })
+}
 
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutsideEdit)
+watch([editingIndex, editingContent, stashedFromIndex, shouldRestoreOnCancel], () => {
+  scheduleSaveEditState()
 })
 
 function selectMode(mode: ChatMode) {
@@ -952,12 +1061,33 @@ watch(
   }
 )
 
-onMounted(() => {
+onMounted(async () => {
   loadConfig()
   loadCwd()
   loadMessagesPromise = loadMessages()
-  nextTick(() => composerRef.value?.focusInput())
+  await loadMessagesPromise
+  await restoreEditState()
+  if (editingIndex.value === null) {
+    nextTick(() => composerRef.value?.focusInput())
+  }
   emit('streamingChange', isStreaming.value)
+})
+
+onBeforeUnmount(() => {
+  if (editStateSaveTimer) {
+    clearTimeout(editStateSaveTimer)
+    editStateSaveTimer = null
+  }
+  if (editingIndex.value === null) {
+    void window.conversationApi.setEditState(props.conversationId, null)
+    return
+  }
+  void window.conversationApi.setEditState(props.conversationId, {
+    editingIndex: editingIndex.value,
+    editingContent: editingContent.value,
+    stashedFromIndex: stashedFromIndex.value,
+    shouldRestoreOnCancel: shouldRestoreOnCancel.value,
+  })
 })
 
 
@@ -1165,23 +1295,6 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
         </div>
       </div>
 
-      <!-- Stash restore banner -->
-      <div v-if="stashedFromIndex !== null" class="stash-banner">
-        <div class="stash-info">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="1 4 1 10 7 10"/>
-            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-          </svg>
-          <span>已回退 {{ messages.length - stashedFromIndex }} 条消息的修改</span>
-        </div>
-        <button class="stash-restore-btn" @click="restoreStash">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"/>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-          </svg>
-          恢复对话
-        </button>
-      </div>
     </div>
 
     <!-- 错误提示 -->
@@ -1225,6 +1338,20 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
       <div v-if="imagePreviewUrl" class="image-preview-overlay" @click="closeImagePreview">
         <img :src="imagePreviewUrl" class="image-preview-full" @click.stop />
         <button class="image-preview-close" @click="closeImagePreview">✕</button>
+      </div>
+    </Transition>
+
+    <Transition name="dropdown">
+      <div v-if="editConflictDialogVisible" class="edit-conflict-overlay" @click.self="closeEditConflictDialog">
+        <div class="edit-conflict-dialog">
+          <button class="edit-conflict-close" title="关闭" @click="closeEditConflictDialog">✕</button>
+          <h3>检测到文件修改</h3>
+          <p>是否撤回已生效修改？</p>
+          <div class="edit-conflict-actions">
+            <button class="edit-conflict-btn primary" @click="editWithUndo">撤回修改并编辑</button>
+            <button class="edit-conflict-btn" @click="editWithoutUndo">保留修改并编辑</button>
+          </div>
+        </div>
       </div>
     </Transition>
 
@@ -1294,6 +1421,7 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
 .message-row {
   display: flex;
   position: relative;
+  overflow: visible;
 }
 
 .message-row:hover {
@@ -1637,53 +1765,6 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
   50% { opacity: 0; }
 }
 
-.stash-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 20px;
-  margin: 8px 16px;
-  background: var(--c-surface0);
-  border: 1px solid var(--c-surface2);
-  border-radius: 10px;
-}
-
-.stash-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.82rem;
-  color: var(--c-subtext0);
-}
-
-.stash-info svg {
-  color: var(--c-overlay0);
-  flex-shrink: 0;
-}
-
-.stash-restore-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--c-blue);
-  background: transparent;
-  color: var(--c-blue);
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.stash-restore-btn:hover {
-  background: var(--c-blue);
-  color: #fff;
-}
-
 .error-bar {
   display: flex;
   align-items: center;
@@ -1781,6 +1862,93 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
   background: rgba(255, 255, 255, 0.3);
 }
 
+.edit-conflict-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 700;
+}
+
+.edit-conflict-dialog {
+  position: relative;
+  width: min(460px, calc(100vw - 32px));
+  background: var(--c-surface-alt);
+  border: 1px solid var(--c-surface1);
+  border-radius: 12px;
+  box-shadow: 0 14px 36px var(--c-shadow-heavy);
+  padding: 16px;
+}
+
+.edit-conflict-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--c-subtext0);
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.edit-conflict-close:hover {
+  background: var(--c-surface0);
+  color: var(--c-text);
+}
+
+.edit-conflict-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+  color: var(--c-text);
+}
+
+.edit-conflict-dialog p {
+  margin: 0;
+  font-size: 0.86rem;
+  line-height: 1.6;
+  color: var(--c-subtext0);
+}
+
+.edit-conflict-actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.edit-conflict-btn {
+  border: 1px solid var(--c-surface1);
+  background: var(--c-base);
+  color: var(--c-text);
+  border-radius: 7px;
+  font-size: 0.82rem;
+  padding: 6px 10px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.edit-conflict-btn:hover {
+  background: var(--c-surface0);
+  border-color: var(--c-overlay0);
+}
+
+.edit-conflict-btn.primary {
+  border-color: color-mix(in srgb, var(--c-red, #d20f39) 45%, var(--c-surface1));
+  color: var(--c-red, #d20f39);
+}
+
+.edit-conflict-btn.primary:hover {
+  background: color-mix(in srgb, var(--c-red, #d20f39) 12%, transparent);
+}
+
 .message-bubble {
   position: relative;
 }
@@ -1788,12 +1956,16 @@ defineExpose({ loadConfig, sendWithContent, insertCodeReference, exportConversat
 /* Inline editing */
 .edit-inline {
   width: 100%;
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 
 .message-bubble.editing {
   max-width: 100%;
   background: transparent;
   padding: 0;
+  overflow: visible;
 }
 
 /* Hover action buttons */

@@ -89,6 +89,8 @@ function onFileClick(e: MouseEvent, entry: FileEntry) {
   if (e.metaKey || e.ctrlKey) {
     toggleSelect(entry.path, entry, e)
   } else {
+    selectedFiles.clear()
+    selectedFiles.add(entry.path)
     lastClickedPath.value = entry.path
     if (entry.isDirectory) toggleDir(entry.path)
     else openFile(entry.path)
@@ -215,6 +217,35 @@ function previewHtml() {
   previewHtmlFile(p)
 }
 
+const isMultiSelected = computed(() => {
+  return ctxMenu.value.visible
+    && selectedFiles.has(ctxMenu.value.path)
+    && selectedFiles.size > 1
+})
+
+async function deleteSelected() {
+  const paths = Array.from(selectedFiles)
+  closeCtxMenu()
+  if (!paths.length) return
+
+  const flat = allEntries.value
+  const { cancelled, errors } = await window.fsApi.deletePaths(paths)
+  if (cancelled) return
+
+  for (const p of paths) {
+    const hasError = errors.some(e => e.startsWith(p.replace(/.*\//, '') + ':'))
+    if (!hasError) {
+      const entry = flat.find(f => f.path === p)
+      onFileDeleted(p, entry?.isDirectory ?? false)
+    }
+  }
+  selectedFiles.clear()
+
+  if (errors.length) {
+    window.alert(`部分删除失败：\n${errors.join('\n')}`)
+  }
+}
+
 async function deletePath() {
   const { path, name, isDirectory } = ctxMenu.value
   closeCtxMenu()
@@ -339,7 +370,7 @@ onUnmounted(() => document.removeEventListener('mousedown', closeCtxMenu))
       <button @click="showInFolder">在文件管理器中显示</button>
       <button v-if="isHtmlFile(ctxMenu.path)" @click="previewHtml">在浏览器中打开</button>
       <div class="ctx-divider"></div>
-      <button class="danger" @click="deletePath">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
+      <button class="danger" @click="isMultiSelected ? deleteSelected() : deletePath()">删除{{ ctxMenu.isDirectory ? '文件夹' : '文件' }}</button>
     </div>
   </Teleport>
 </template>

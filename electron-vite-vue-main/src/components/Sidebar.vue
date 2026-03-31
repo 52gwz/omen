@@ -10,6 +10,8 @@ const props = defineProps<{
   projectPath?: string
   /** 主工作区当前激活的编辑器文件路径，用于文件树高亮 */
   activeEditorFilePath?: string
+  /** 当前是否激活技能标签页（用于菜单高亮） */
+  isSkillsActive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -37,7 +39,7 @@ const filesExpanded = ref(true)
 const fileTree = reactive<FileEntry[]>([])
 const expandedDirs = reactive(new Set<string>())
 const dirChildren = reactive<Record<string, FileEntry[]>>({})
-const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: string; type: 'conv' | 'project' }>({
+const contextMenu = ref<{ visible: boolean; x: number; y: number; targetId: string; type: 'conv' | 'project' | 'project-root' }>({
   visible: false, x: 0, y: 0, targetId: '', type: 'conv',
 })
 
@@ -485,21 +487,21 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
     <!-- 普通模式：项目区 -->
     <template v-if="!projectId">
       <div class="projects-section">
-        <button
-          class="new-chat-btn"
-          @click="openHome"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          <span>发起对话</span>
-        </button>
+        <div class="nav-actions">
+          <button class="nav-action-btn" @click="openHome">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 3H8a5 5 0 0 0-5 5v8a5 5 0 0 0 5 5h8" />
+              <path d="M17.5 6.5 20 9m-8.5 6.5L20 7" />
+            </svg>
+            <span>创建对话</span>
+          </button>
 
-        <div class="skills-wrapper">
-          <button class="skills-btn" @click="openSkillsTab">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+          <button class="nav-action-btn" :class="{ active: isSkillsActive }" @click="openSkillsTab">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="7" cy="7" r="3" />
+              <circle cx="17" cy="7" r="3" />
+              <circle cx="7" cy="17" r="3" />
+              <circle cx="17" cy="17" r="3" />
             </svg>
             <span>技能</span>
           </button>
@@ -519,13 +521,13 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
         </div>
 
         <div v-show="projectsExpanded" class="project-list">
-          <div class="project-item" @click="createProject">
+          <div class="project-item project-item-create" @click="createProject">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               <line x1="12" y1="11" x2="12" y2="17" />
               <line x1="9" y1="14" x2="15" y2="14" />
             </svg>
-            <span class="project-name">创建/导入项目</span>
+            <span class="project-name">创建项目</span>
           </div>
           <div
             v-for="project in projects"
@@ -546,22 +548,26 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
     <!-- 项目模式：发起对话 + 文件浏览器 -->
     <div v-if="projectId" class="projects-section">
-      <button class="new-chat-btn" @click="openHome">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-        <span>发起对话</span>
-      </button>
+      <div class="nav-actions">
+        <button class="nav-action-btn" @click="openHome">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M16 3H8a5 5 0 0 0-5 5v8a5 5 0 0 0 5 5h8" />
+            <path d="M17.5 6.5 20 9m-8.5 6.5L20 7" />
+          </svg>
+          <span>创建对话</span>
+        </button>
 
-      <div class="skills-wrapper">
-        <button class="skills-btn" @click="openSkillsTab">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        <button class="nav-action-btn" :class="{ active: isSkillsActive }" @click="openSkillsTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="7" cy="7" r="3" />
+            <circle cx="17" cy="7" r="3" />
+            <circle cx="7" cy="17" r="3" />
+            <circle cx="17" cy="17" r="3" />
           </svg>
           <span>技能</span>
         </button>
       </div>
+
     </div>
 
     <div v-if="projectId" class="files-section">
@@ -595,7 +601,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
         </div>
       </div>
 
-      <div v-show="filesExpanded" class="file-tree" @contextmenu.self="onFileTreeContext" @dragover.self="onFileTreeDragOver" @drop.self="onFileTreeDrop">
+      <div v-show="filesExpanded" class="file-tree" @click.self="clearFileSelection" @contextmenu.self="onFileTreeContext" @dragover.self="onFileTreeDragOver" @drop.self="onFileTreeDrop">
         <div v-if="newItemState && newItemState.parentDir === projectPath" class="new-item-row">
           <svg v-if="newItemState.type === 'dir'" class="file-icon dir-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -655,7 +661,7 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
           <p>暂无对话</p>
-          <p class="empty-hint-sub">点击上方 + 创建新对话</p>
+          <p class="empty-hint-sub">点击上方“创建对话”开始</p>
         </div>
       </div>
     </div>
@@ -757,8 +763,10 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   border: none;
   color: var(--c-overlay0);
   cursor: pointer;
-  padding: 4px;
-  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -831,40 +839,71 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   padding-bottom: 4px;
 }
 
-.new-chat-btn {
+.nav-actions {
+  padding: 6px 8px 4px;
+}
+
+.nav-action-btn {
   -webkit-app-region: no-drag;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: calc(100% - 16px);
-  padding: 8px 12px;
-  margin: 8px 8px 4px;
-  border-radius: 8px;
-  border: 1px dashed var(--c-surface2);
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  margin: 0;
+  border-radius: 9px;
+  border: none;
   background: transparent;
-  color: var(--c-sidebar-text);
-  font-size: 0.82rem;
-  font-weight: 500;
+  color: var(--c-text);
+  font-size: 0.84rem;
+  font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
-.new-chat-btn:hover {
+.nav-action-btn + .nav-action-btn {
+  margin-top: 2px;
+}
+
+.nav-action-btn:hover {
   background: var(--c-chrome-hover-bg);
   color: var(--c-text);
-  border-color: var(--c-overlay0);
 }
 
-.new-chat-btn svg {
+.nav-action-btn.active {
+  background: var(--c-chrome-selected-bg);
+  color: var(--c-text);
+}
+
+.nav-action-btn svg {
   flex-shrink: 0;
-  color: var(--c-overlay0);
+  color: var(--c-overlay1);
   transition: color 0.15s;
 }
 
-.new-chat-btn:hover svg {
-  color: var(--c-blue);
+.nav-action-btn:hover svg {
+  color: var(--c-text);
+}
+
+.nav-action-btn.active svg {
+  color: var(--c-text);
+}
+
+:global(.dark) .nav-action-btn {
+  color: var(--c-text);
+}
+
+:global(.dark) .nav-action-btn svg {
+  color: var(--c-text);
+}
+
+:global(.light) .nav-action-btn {
+  color: #424242;
+}
+
+:global(.light) .nav-action-btn svg {
+  color: #424242;
 }
 
 .section-header {
@@ -985,7 +1024,11 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
 
 .project-item svg {
   flex-shrink: 0;
-  color: var(--c-yellow, #df8e1d);
+  color: var(--c-overlay1);
+}
+
+.project-item-create svg {
+  color: var(--c-blue, #1e66f5);
 }
 
 .project-name {
@@ -1108,42 +1151,6 @@ defineExpose({ loadConversations, setActiveConv, toggleCollapse, collapsed })
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
-
-/* ---- Skills Section ---- */
-.skills-wrapper {
-  position: relative;
-  padding: 0 8px;
-  margin-bottom: 4px;
-}
-
-.skills-btn {
-  -webkit-app-region: no-drag;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: var(--c-sidebar-text);
-  font-size: 0.82rem;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.skills-btn:hover {
-  background: var(--c-chrome-hover-bg);
-  color: var(--c-text);
-}
-
-.skills-btn svg {
-  flex-shrink: 0;
-  color: var(--c-yellow, #df8e1d);
-}
-
 
 .ctx-menu {
   position: fixed;

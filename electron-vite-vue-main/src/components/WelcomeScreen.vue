@@ -139,7 +139,7 @@ onMounted(() => {
               来吧！开始为 <span class="project-highlight">{{ projectName }}</span> 做点什么
             </template>
             <template v-else>
-              你可以在下方开启对话，或者拖入项目到这里
+              欢迎使用Omen桌面智能体
             </template>
           </h1>
         </Transition>
@@ -157,7 +157,7 @@ onMounted(() => {
           :current-model="currentModel"
           :chat-mode="chatMode"
           :can-send="canSend"
-          placeholder="描述你想要完成的任务..."
+          :placeholder="chatMode === 'agent' ? 'Agent 模式：描述任务...' : '输入消息... (Shift+Enter 换行)'"
           @send="submit"
           @paste="handlePaste"
           @select-images="selectImages"

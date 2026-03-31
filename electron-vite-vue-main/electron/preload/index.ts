@@ -213,6 +213,25 @@ contextBridge.exposeInMainWorld('conversationApi', {
   getCwd(convId: string): Promise<string> {
     return ipcRenderer.invoke('conversation:get-cwd', convId)
   },
+  getEditState(convId: string): Promise<{
+    editingIndex: number
+    editingContent: string
+    stashedFromIndex: number | null
+    shouldRestoreOnCancel: boolean
+  } | null> {
+    return ipcRenderer.invoke('conversation:get-edit-state', convId)
+  },
+  setEditState(
+    convId: string,
+    editState: {
+      editingIndex: number
+      editingContent: string
+      stashedFromIndex: number | null
+      shouldRestoreOnCancel: boolean
+    } | null,
+  ): Promise<void> {
+    return ipcRenderer.invoke('conversation:set-edit-state', convId, editState)
+  },
 })
 
 // --------- Skills API ---------
@@ -238,6 +257,48 @@ contextBridge.exposeInMainWorld('workspaceApi', {
   },
 })
 
+// --------- Terminal API ---------
+contextBridge.exposeInMainWorld('terminalApi', {
+  start(payload: { id: string; cwd?: string; cols?: number; rows?: number }): Promise<{ id: string; cwd: string; history: string }> {
+    return ipcRenderer.invoke('terminal:start', payload)
+  },
+  write(id: string, data: string): Promise<void> {
+    return ipcRenderer.invoke('terminal:write', { id, data })
+  },
+  resize(id: string, cols: number, rows: number): Promise<void> {
+    return ipcRenderer.invoke('terminal:resize', { id, cols, rows })
+  },
+  kill(id: string): Promise<void> {
+    return ipcRenderer.invoke('terminal:kill', { id })
+  },
+  onData(callback: (data: { id: string; chunk: string }) => void): () => void {
+    const handler = (_: any, data: { id: string; chunk: string }) => callback(data)
+    ipcRenderer.on('terminal:data', handler)
+    return () => { ipcRenderer.off('terminal:data', handler) }
+  },
+  onExit(callback: (data: { id: string; exitCode: number }) => void): () => void {
+    const handler = (_: any, data: { id: string; exitCode: number }) => callback(data)
+    ipcRenderer.on('terminal:exit', handler)
+    return () => { ipcRenderer.off('terminal:exit', handler) }
+  },
+})
+
+// --------- Window Monitor API ---------
+contextBridge.exposeInMainWorld('windowMonitorApi', {
+  list(query?: string): Promise<Array<{
+    id: string
+    name: string
+    displayId: string
+    thumbnailDataUrl: string
+    appIconDataUrl?: string
+  }>> {
+    return ipcRenderer.invoke('window-monitor:list', query)
+  },
+  capture(payload: { sourceId: string; width?: number; height?: number }): Promise<{ dataUrl: string; error?: string }> {
+    return ipcRenderer.invoke('window-monitor:capture', payload)
+  },
+})
+
 // --------- Filesystem API ---------
 contextBridge.exposeInMainWorld('fsApi', {
   readDir(dirPath: string): Promise<{ name: string; path: string; isDirectory: boolean }[]> {
@@ -245,6 +306,9 @@ contextBridge.exposeInMainWorld('fsApi', {
   },
   deletePath(targetPath: string): Promise<{ error?: string }> {
     return ipcRenderer.invoke('fs:delete-path', targetPath)
+  },
+  deletePaths(paths: string[]): Promise<{ cancelled?: boolean; errors: string[] }> {
+    return ipcRenderer.invoke('fs:delete-paths', paths)
   },
   showInFolder(fullPath: string): Promise<void> {
     return ipcRenderer.invoke('fs:show-in-folder', fullPath)

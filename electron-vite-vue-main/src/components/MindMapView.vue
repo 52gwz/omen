@@ -14,6 +14,7 @@ let mm: Markmap | null = null
 let svgEl: SVGSVGElement | null = null
 let resizeObserver: ResizeObserver | null = null
 let resizeRaf = 0
+let wasContainerVisible = false
 const transformer = new Transformer()
 
 function scheduleMarkmapFit() {
@@ -25,10 +26,23 @@ function scheduleMarkmapFit() {
   })
 }
 
+function isContainerVisible() {
+  if (!container.value) return false
+  const rect = container.value.getBoundingClientRect()
+  return rect.width > 1 && rect.height > 1
+}
+
 function ensureResizeObserver() {
   if (resizeObserver || !container.value) return
-  resizeObserver = new ResizeObserver(() => scheduleMarkmapFit())
+  resizeObserver = new ResizeObserver(() => {
+    const visible = isContainerVisible()
+    if (visible && !wasContainerVisible) {
+      scheduleMarkmapFit()
+    }
+    wasContainerVisible = visible
+  })
   resizeObserver.observe(container.value)
+  wasContainerVisible = isContainerVisible()
 }
 
 function getColorScheme() {
@@ -85,6 +99,7 @@ function renderMap() {
   mm.setData(root)
   mm.fit()
   ensureResizeObserver()
+  wasContainerVisible = isContainerVisible()
 }
 
 function fitToCanvas() {

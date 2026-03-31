@@ -3,6 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ChatView from './ChatView.vue'
 import MonacoEditor from './MonacoEditor.vue'
 import SkillsTab from './SkillsTab.vue'
+import TerminalTab from './TerminalTab.vue'
+import WindowMonitorTab from './WindowMonitorTab.vue'
 import WebViewTab from './WebViewTab.vue'
 import WelcomeScreen from './WelcomeScreen.vue'
 import { MIN_SPLIT_RATIO } from '../types/workspace'
@@ -32,6 +34,9 @@ const props = defineProps<{
   skillsTabId: string
   webviewPrefix: string
   editorPrefix: string
+  terminalPrefix: string
+  monitorPrefix: string
+  projectPath?: string
 }>()
 
 const emit = defineEmits<{
@@ -39,6 +44,8 @@ const emit = defineEmits<{
   switchTab: [paneId: string, idx: number]
   addTab: [paneId: string]
   addWebviewTab: [paneId: string]
+  addTerminalTab: [paneId: string]
+  addMonitorTab: [paneId: string]
   closeTab: [paneId: string, idx: number]
   tabDragStart: [paneId: string, tabId: string]
   tabDragEnd: []
@@ -50,6 +57,7 @@ const emit = defineEmits<{
   titleChange: [convId: string, title: string]
   setChatRef: [convId: string, el: any]
   welcomeSend: [payload: WelcomeSendPayload]
+  openProject: [project: ProjectData]
   splitResizeStart: []
   splitResizeEnd: []
   splitResize: [splitNode: PaneSplitNode, ratio: number]
@@ -68,6 +76,8 @@ function isConversationTab(convId: string): boolean {
     && convId !== props.skillsTabId
     && !convId.startsWith(props.webviewPrefix)
     && !convId.startsWith(props.editorPrefix)
+    && !convId.startsWith(props.terminalPrefix)
+    && !convId.startsWith(props.monitorPrefix)
 }
 
 function getTabLabel(tab: TabInfo): string {
@@ -82,6 +92,8 @@ function getTabLabel(tab: TabInfo): string {
     const fp = tab.convId.slice(props.editorPrefix.length)
     return fp.replace(/\\/g, '/').split('/').pop() || '编辑器'
   }
+  if (tab.convId.startsWith(props.terminalPrefix)) return '终端'
+  if (tab.convId.startsWith(props.monitorPrefix)) return '窗口监视'
   return props.tabTitles[tab.convId] || '对话'
 }
 
@@ -103,6 +115,27 @@ const webviewTabIds = computed(() => {
   return pane.value.tabs
     .map(tab => tab.convId)
     .filter((convId, idx, arr) => convId.startsWith(props.webviewPrefix) && arr.indexOf(convId) === idx)
+})
+
+const terminalTabIds = computed(() => {
+  if (!pane.value) return []
+  return pane.value.tabs
+    .map(tab => tab.convId)
+    .filter((convId, idx, arr) => convId.startsWith(props.terminalPrefix) && arr.indexOf(convId) === idx)
+})
+
+const monitorTabIds = computed(() => {
+  if (!pane.value) return []
+  return pane.value.tabs
+    .map(tab => tab.convId)
+    .filter((convId, idx, arr) => convId.startsWith(props.monitorPrefix) && arr.indexOf(convId) === idx)
+})
+
+const editorTabIds = computed(() => {
+  if (!pane.value) return []
+  return pane.value.tabs
+    .map(tab => tab.convId)
+    .filter((convId, idx, arr) => convId.startsWith(props.editorPrefix) && arr.indexOf(convId) === idx)
 })
 
 const disableSelfDropPreview = computed(() => {
@@ -334,6 +367,16 @@ function addBrowserTab() {
   emit('addWebviewTab', pane.value.id)
 }
 
+function addTerminalTab() {
+  if (!pane.value) return
+  emit('addTerminalTab', pane.value.id)
+}
+
+function addMonitorTab() {
+  if (!pane.value) return
+  emit('addMonitorTab', pane.value.id)
+}
+
 function updateScrollState() {
   const el = tabsScrollEl.value
   if (!el) {
@@ -471,10 +514,15 @@ onBeforeUnmount(() => {
         :skills-tab-id="skillsTabId"
         :webview-prefix="webviewPrefix"
         :editor-prefix="editorPrefix"
+        :terminal-prefix="terminalPrefix"
+        :monitor-prefix="monitorPrefix"
+        :project-path="projectPath"
         @focus-pane="emit('focusPane', $event)"
         @switch-tab="(paneId, idx) => emit('switchTab', paneId, idx)"
         @add-tab="emit('addTab', $event)"
         @add-webview-tab="emit('addWebviewTab', $event)"
+        @add-terminal-tab="emit('addTerminalTab', $event)"
+        @add-monitor-tab="emit('addMonitorTab', $event)"
         @close-tab="(paneId, idx) => emit('closeTab', paneId, idx)"
         @tab-drag-start="(paneId, tabId) => emit('tabDragStart', paneId, tabId)"
         @tab-drag-end="emit('tabDragEnd')"
@@ -486,6 +534,7 @@ onBeforeUnmount(() => {
         @title-change="(convId, title) => emit('titleChange', convId, title)"
         @set-chat-ref="(convId, el) => emit('setChatRef', convId, el)"
         @welcome-send="emit('welcomeSend', $event)"
+        @open-project="emit('openProject', $event)"
         @split-resize-start="emit('splitResizeStart')"
         @split-resize-end="emit('splitResizeEnd')"
         @split-resize="(splitNode, ratio) => emit('splitResize', splitNode, ratio)"
@@ -512,10 +561,15 @@ onBeforeUnmount(() => {
         :skills-tab-id="skillsTabId"
         :webview-prefix="webviewPrefix"
         :editor-prefix="editorPrefix"
+        :terminal-prefix="terminalPrefix"
+        :monitor-prefix="monitorPrefix"
+        :project-path="projectPath"
         @focus-pane="emit('focusPane', $event)"
         @switch-tab="(paneId, idx) => emit('switchTab', paneId, idx)"
         @add-tab="emit('addTab', $event)"
         @add-webview-tab="emit('addWebviewTab', $event)"
+        @add-terminal-tab="emit('addTerminalTab', $event)"
+        @add-monitor-tab="emit('addMonitorTab', $event)"
         @close-tab="(paneId, idx) => emit('closeTab', paneId, idx)"
         @tab-drag-start="(paneId, tabId) => emit('tabDragStart', paneId, tabId)"
         @tab-drag-end="emit('tabDragEnd')"
@@ -527,6 +581,7 @@ onBeforeUnmount(() => {
         @title-change="(convId, title) => emit('titleChange', convId, title)"
         @set-chat-ref="(convId, el) => emit('setChatRef', convId, el)"
         @welcome-send="emit('welcomeSend', $event)"
+        @open-project="emit('openProject', $event)"
         @split-resize-start="emit('splitResizeStart')"
         @split-resize-end="emit('splitResizeEnd')"
         @split-resize="(splitNode, ratio) => emit('splitResize', splitNode, ratio)"
@@ -568,6 +623,8 @@ onBeforeUnmount(() => {
               'skills-tab': tab.convId === skillsTabId,
               'webview-tab': tab.convId.startsWith(webviewPrefix),
               'editor-tab': tab.convId.startsWith(editorPrefix),
+              'terminal-tab': tab.convId.startsWith(terminalPrefix),
+              'monitor-tab': tab.convId.startsWith(monitorPrefix),
               'conv-tab': isConversationTab(tab.convId),
               ...getTabInsertClass(idx)
             }"
@@ -582,13 +639,25 @@ onBeforeUnmount(() => {
               <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
               <polyline points="9 22 9 12 15 12 15 22" />
             </svg>
-            <svg v-else-if="tab.convId === skillsTabId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            <svg v-else-if="tab.convId === skillsTabId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="7" cy="7" r="3" />
+              <circle cx="17" cy="7" r="3" />
+              <circle cx="7" cy="17" r="3" />
+              <circle cx="17" cy="17" r="3" />
             </svg>
             <svg v-else-if="tab.convId.startsWith(webviewPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10" />
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+            <svg v-else-if="tab.convId.startsWith(terminalPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+            <svg v-else-if="tab.convId.startsWith(monitorPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="14" rx="2" />
+              <line x1="9" y1="20" x2="15" y2="20" />
+              <circle cx="12" cy="11" r="2" />
             </svg>
             <img v-else-if="tab.convId.startsWith(editorPrefix)" :src="getFileIcon(tab.convId.slice(editorPrefix.length))" width="14" height="14" alt="file icon" />
             <svg v-else-if="isConversationTab(tab.convId)" class="conv-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -648,13 +717,25 @@ onBeforeUnmount(() => {
                 <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 <polyline points="9 22 9 12 15 12 15 22" />
               </svg>
-              <svg v-else-if="tab.convId === skillsTabId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              <svg v-else-if="tab.convId === skillsTabId" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="7" cy="7" r="3" />
+                <circle cx="17" cy="7" r="3" />
+                <circle cx="7" cy="17" r="3" />
+                <circle cx="17" cy="17" r="3" />
               </svg>
               <svg v-else-if="tab.convId.startsWith(webviewPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="10" />
                 <line x1="2" y1="12" x2="22" y2="12" />
                 <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+              </svg>
+              <svg v-else-if="tab.convId.startsWith(terminalPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+              <svg v-else-if="tab.convId.startsWith(monitorPrefix)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="14" rx="2" />
+                <line x1="9" y1="20" x2="15" y2="20" />
+                <circle cx="12" cy="11" r="2" />
               </svg>
               <img v-else-if="tab.convId.startsWith(editorPrefix)" :src="getFileIcon(tab.convId.slice(editorPrefix.length))" width="14" height="14" alt="file icon" />
               <svg v-else-if="isConversationTab(tab.convId)" class="conv-tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -675,6 +756,19 @@ onBeforeUnmount(() => {
             <circle cx="12" cy="12" r="10" />
             <line x1="2" y1="12" x2="22" y2="12" />
             <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+        </button>
+        <button class="tab-browser-btn" title="新建终端" @click.stop="addTerminalTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+        </button>
+        <button class="tab-browser-btn" title="新建窗口监视" @click.stop="addMonitorTab">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="14" rx="2" />
+            <line x1="9" y1="20" x2="15" y2="20" />
+            <circle cx="12" cy="11" r="2" />
           </svg>
         </button>
       </div>
@@ -706,15 +800,37 @@ onBeforeUnmount(() => {
         :drag-active="interactionActive"
       />
 
+      <TerminalTab
+        v-for="convId in terminalTabIds"
+        v-show="convId === activeConvId"
+        :key="convId"
+        :terminal-id="convId.slice(terminalPrefix.length)"
+        :cwd="projectPath"
+        :active="convId === activeConvId"
+        :drag-active="interactionActive"
+      />
+
+      <WindowMonitorTab
+        v-for="convId in monitorTabIds"
+        v-show="convId === activeConvId"
+        :key="convId"
+        :monitor-id="convId.slice(monitorPrefix.length)"
+        :active="convId === activeConvId"
+        :drag-active="interactionActive"
+      />
+
       <MonacoEditor
-        v-if="activeConvId.startsWith(editorPrefix)"
-        :file-path="activeConvId.slice(editorPrefix.length)"
+        v-for="convId in editorTabIds"
+        v-show="convId === activeConvId"
+        :key="convId"
+        :file-path="convId.slice(editorPrefix.length)"
       />
 
       <WelcomeScreen
         v-if="!activeConvId"
         :project-name="projectName"
         @send="emit('welcomeSend', $event)"
+        @open-project="emit('openProject', $event)"
       />
 
       <div
@@ -995,12 +1111,17 @@ onBeforeUnmount(() => {
 
 .skills-tab.active svg,
 .skills-tab:hover svg {
-  color: var(--c-yellow, #df8e1d);
+  color: var(--c-text);
 }
 
 .webview-tab.active svg,
 .webview-tab:hover svg {
   color: var(--c-teal, #179299);
+}
+
+.monitor-tab.active svg,
+.monitor-tab:hover svg {
+  color: var(--c-yellow, #df8e1d);
 }
 
 .conv-tab.active .conv-tab-icon,

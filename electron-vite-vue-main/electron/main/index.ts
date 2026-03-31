@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, globalShortcut } from 'electron'
+import { app, BrowserWindow, shell, ipcMain, dialog, globalShortcut, desktopCapturer } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -8,6 +8,21 @@ import Store from 'electron-store'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const pty = require('node-pty') as typeof import('node-pty')
+
+function ensureNodePtyHelperExecutable() {
+  try {
+    const pkgPath = require.resolve('node-pty/package.json')
+    const pkgDir = path.dirname(pkgPath)
+    const unpackedPkgDir = pkgDir.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked')
+    const helperPath = path.join(unpackedPkgDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
+    if (fs.existsSync(helperPath)) {
+      fs.chmodSync(helperPath, 0o755)
+    }
+  } catch {}
+}
+
+ensureNodePtyHelperExecutable()
 
 interface ProjectData {
   id: string
@@ -39,6 +54,17 @@ interface StoredMessage {
   toolCalls?: StoredToolCall[]
 }
 
+interface ConversationRecord {
+  meta: ConversationMeta
+  messages: StoredMessage[]
+  editState?: {
+    editingIndex: number
+    editingContent: string
+    stashedFromIndex: number | null
+    shouldRestoreOnCancel: boolean
+  } | null
+}
+
 interface ModelProvider {
   id: string
   name: string
@@ -57,7 +83,7 @@ type StoreSchema = {
   activeProviderId: string
   activeModel: string
   projects: ProjectData[]
-  conversations: Record<string, { meta: ConversationMeta; messages: StoredMessage[] }>
+  conversations: Record<string, ConversationRecord>
   disabledSkills: string[]
   workspaceState: any
 }
@@ -166,6 +192,64 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
+type PtySession = {
+  ptyProcess: import('node-pty').IPty
+  ownerId: number
+  cwd: string
+  history: string
+}
+
+const terminalSessions = new Map<string, PtySession>()
+
+function resolveShell() {
+  if (process.platform === 'win32') {
+    return process.env.COMSPEC || 'powershell.exe'
+  }
+  return process.env.SHELL || '/bin/zsh'
+}
+
+function resolveTerminalCwd(cwd?: string) {
+  if (!cwd) return app.getPath('home')
+  try {
+    if (fs.statSync(cwd).isDirectory()) return cwd
+  } catch {}
+  return app.getPath('home')
+}
+
+function resolveUtf8Locale() {
+  const candidates = [
+    process.env.LC_ALL,
+    process.env.LC_CTYPE,
+    process.env.LANG,
+  ].filter((value): value is string => Boolean(value && /utf-?8/i.test(value)))
+
+  return candidates[0] || 'en_US.UTF-8'
+}
+
+function killTerminalSession(id: string) {
+  const session = terminalSessions.get(id)
+  if (!session) return
+  try {
+    session.ptyProcess.kill()
+  } catch {}
+  terminalSessions.delete(id)
+}
+
+function cleanupTerminalSessionsForOwner(ownerId: number) {
+  for (const [id, session] of terminalSessions.entries()) {
+    if (session.ownerId === ownerId) {
+      killTerminalSession(id)
+    }
+  }
+}
+
+function appendTerminalHistory(session: PtySession, chunk: string) {
+  session.history += chunk
+  if (session.history.length > 200000) {
+    session.history = session.history.slice(-100000)
+  }
+}
+
 
 async function createWindow() {
   win = new BrowserWindow({
@@ -214,6 +298,9 @@ async function createWindow() {
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
+  for (const id of [...terminalSessions.keys()]) {
+    killTerminalSession(id)
+  }
   win = null
   if (process.platform !== 'darwin') app.quit()
 })
@@ -640,7 +727,7 @@ ipcMain.handle('conversation:create', (_, title: string, projectId?: string): Co
     cwd: project?.path,
   }
   const conversations = store.get('conversations') || {}
-  conversations[meta.id] = { meta, messages: [] }
+  conversations[meta.id] = { meta, messages: [], editState: null }
   store.set('conversations', conversations)
   return meta
 })
@@ -685,12 +772,132 @@ ipcMain.handle('conversation:save-messages', (_, convId: string, messages: Store
   }
 })
 
+ipcMain.handle('conversation:get-edit-state', (_, convId: string) => {
+  const conversations = store.get('conversations') || {}
+  return conversations[convId]?.editState || null
+})
+
+ipcMain.handle('conversation:set-edit-state', (_, convId: string, editState: ConversationRecord['editState']) => {
+  const conversations = store.get('conversations') || {}
+  if (conversations[convId]) {
+    conversations[convId].editState = editState || null
+    store.set('conversations', conversations)
+  }
+})
+
 ipcMain.handle('workspace:save', (_, state: any) => {
   store.set('workspaceState', state)
 })
 
 ipcMain.handle('workspace:load', () => {
   return store.get('workspaceState') || null
+})
+
+ipcMain.handle('terminal:start', async (event, payload: { id: string; cwd?: string; cols?: number; rows?: number }) => {
+  const existing = terminalSessions.get(payload.id)
+  if (existing) {
+    return { id: payload.id, cwd: existing.cwd, history: existing.history }
+  }
+
+  const cwd = resolveTerminalCwd(payload.cwd)
+  const ownerId = event.sender.id
+  const ownerWebContents = event.sender
+  const utf8Locale = resolveUtf8Locale()
+  const ptyProcess = pty.spawn(resolveShell(), [], {
+    name: 'xterm-256color',
+    cols: Math.max(20, payload.cols || 80),
+    rows: Math.max(5, payload.rows || 24),
+    cwd,
+    env: {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      LANG: process.env.LANG || utf8Locale,
+      LC_ALL: process.env.LC_ALL || utf8Locale,
+      LC_CTYPE: process.env.LC_CTYPE || utf8Locale,
+    },
+  })
+
+  const session: PtySession = { ptyProcess, ownerId, cwd, history: '' }
+  terminalSessions.set(payload.id, session)
+
+  ptyProcess.onData((chunk: string) => {
+    appendTerminalHistory(session, chunk)
+    if (!ownerWebContents.isDestroyed()) {
+      ownerWebContents.send('terminal:data', { id: payload.id, chunk })
+    }
+  })
+
+  ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
+    terminalSessions.delete(payload.id)
+    if (!ownerWebContents.isDestroyed()) {
+      ownerWebContents.send('terminal:exit', { id: payload.id, exitCode })
+    }
+  })
+
+  ownerWebContents.once('destroyed', () => cleanupTerminalSessionsForOwner(ownerId))
+
+  return { id: payload.id, cwd, history: session.history }
+})
+
+ipcMain.handle('terminal:write', async (_event, payload: { id: string; data: string }) => {
+  terminalSessions.get(payload.id)?.ptyProcess.write(payload.data)
+})
+
+ipcMain.handle('terminal:resize', async (_event, payload: { id: string; cols: number; rows: number }) => {
+  const session = terminalSessions.get(payload.id)
+  if (!session) return
+  session.ptyProcess.resize(
+    Math.max(20, Math.floor(payload.cols || 80)),
+    Math.max(5, Math.floor(payload.rows || 24)),
+  )
+})
+
+ipcMain.handle('terminal:kill', async (_event, payload: { id: string }) => {
+  killTerminalSession(payload.id)
+})
+
+ipcMain.handle('window-monitor:list', async (_event, query?: string) => {
+  const keyword = (query || '').trim().toLowerCase()
+  const sources = await desktopCapturer.getSources({
+    types: ['window'],
+    fetchWindowIcons: true,
+    thumbnailSize: { width: 360, height: 220 },
+  })
+
+  return sources
+    .filter((source) => {
+      if (!keyword) return true
+      return source.name.toLowerCase().includes(keyword)
+    })
+    .map((source) => ({
+      id: source.id,
+      name: source.name,
+      displayId: source.display_id,
+      thumbnailDataUrl: source.thumbnail.toDataURL(),
+      appIconDataUrl: source.appIcon?.isEmpty() ? '' : source.appIcon?.toDataURL(),
+    }))
+})
+
+ipcMain.handle('window-monitor:capture', async (_event, payload: { sourceId: string; width?: number; height?: number }) => {
+  const width = Math.max(320, Math.floor(payload.width || 1280))
+  const height = Math.max(180, Math.floor(payload.height || 720))
+
+  const sources = await desktopCapturer.getSources({
+    types: ['window'],
+    thumbnailSize: { width, height },
+  })
+
+  const target = sources.find((source) => source.id === payload.sourceId)
+  if (!target) {
+    return { dataUrl: '', error: '目标窗口不存在，可能已关闭，请刷新列表后重选。' }
+  }
+
+  if (target.thumbnail.isEmpty()) {
+    return { dataUrl: '', error: '无法捕获窗口画面，请检查系统屏幕录制权限。' }
+  }
+
+  return { dataUrl: target.thumbnail.toDataURL() }
 })
 
 ipcMain.handle('agent:get-system-prompt', async (_, payload: { cwd: string; tabContext?: string }) => {
@@ -816,6 +1023,36 @@ ipcMain.handle('fs:delete-path', async (_, targetPath: string): Promise<{ error?
   } catch (e: any) {
     return { error: e.message }
   }
+})
+
+ipcMain.handle('fs:delete-paths', async (_, paths: string[]): Promise<{ errors: string[] }> => {
+  if (!win || !paths.length) return { errors: [] }
+
+  const names = paths.map(p => path.basename(p))
+  const maxShow = 10
+  const shown = names.slice(0, maxShow).join('\n')
+  const extra = names.length > maxShow ? `\n...还有 ${names.length - maxShow} 个文件未显示` : ''
+
+  const { response } = await dialog.showMessageBox(win, {
+    type: 'warning',
+    buttons: ['取消', '移到回收站'],
+    defaultId: 0,
+    cancelId: 0,
+    message: `确认要删除以下 ${paths.length} 个文件吗？`,
+    detail: shown + extra + '\n\n你可以从回收站中恢复这些文件。',
+  })
+
+  if (response === 0) return { errors: [] }
+
+  const errors: string[] = []
+  for (const p of paths) {
+    try {
+      await shell.trashItem(p)
+    } catch (e: any) {
+      errors.push(`${path.basename(p)}: ${e.message}`)
+    }
+  }
+  return { errors }
 })
 
 ipcMain.handle('fs:write-file', async (_, filePath: string, content: string): Promise<{ error?: string }> => {
