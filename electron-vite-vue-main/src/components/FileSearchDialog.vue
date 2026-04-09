@@ -40,6 +40,7 @@ async function searchFiles() {
 }
 
 function handleKeydown(e: KeyboardEvent) {
+  if (!props.visible) return
   if (e.key === 'Escape') {
     emit('close')
     return

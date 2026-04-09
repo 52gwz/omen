@@ -69,6 +69,8 @@ const pickerSelected = ref<'confirm' | 'reject'>('confirm')
 
 function onPickerKey(e: KeyboardEvent) {
   if (props.status !== 'pending') return
+  const target = e.target as HTMLElement
+  if (target?.isContentEditable || target?.closest?.('[contenteditable]')) return
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
     pickerSelected.value = pickerSelected.value === 'confirm' ? 'reject' : 'confirm'
