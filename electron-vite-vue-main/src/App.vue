@@ -227,6 +227,11 @@ onMounted(() => {
       closeTab(activePaneVal.id, activePaneVal.activeTabIdx)
     }
   })
+
+  // Agent 创建终端时自动打开终端标签页
+  window.agentChat.onTerminalCreated((data) => {
+    addTerminalTabWithId(data.terminalId)
+  })
 })
 
 function onFileSearchSelect(filePath: string) {
@@ -529,6 +534,14 @@ function addNewTerminalTab(paneId?: string) {
   const c = getCtx()
   const pane = paneId ? findPaneById(c.root, paneId) : getActivePane(c)
   if (!pane) return
+  pane.tabs.push(createTab(TERMINAL_PREFIX + terminalId))
+  pane.activeTabIdx = pane.tabs.length - 1
+  c.activePaneId = pane.id
+}
+
+function addTerminalTabWithId(terminalId: string) {
+  const c = getCtx()
+  const pane = findBestPaneForCategory(c, 'terminal')
   pane.tabs.push(createTab(TERMINAL_PREFIX + terminalId))
   pane.activeTabIdx = pane.tabs.length - 1
   c.activePaneId = pane.id

@@ -58,6 +58,7 @@ interface AgentChatApi {
   onError(callback: (data: { requestId: string; message: string }) => void): () => void
   onPlanUpdate(callback: (data: { requestId: string; toolCallId: string; explanation: string | null; plan: Array<{ step: string; status: string }> }) => void): () => void
   onFileChanges(callback: (data: { requestId: string; files: { filePath: string; deleted: boolean }[] }) => void): () => void
+  onTerminalCreated(callback: (data: { requestId: string; terminalId: string; cwd: string }) => void): () => void
 }
 
 interface DialogApi {

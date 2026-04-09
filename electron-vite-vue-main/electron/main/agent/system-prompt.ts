@@ -71,6 +71,13 @@ You have access to the following tools:
 7. **grep_search** - Search file contents with regular expressions, supporting recursive search and file type filtering.
 8. **update_plan** - Update the task plan/todo list to track progress on multi-step tasks.
 
+### Terminal Tools
+
+9. **create_terminal** - Create a new persistent terminal tab. The terminal stays alive until closed and appears in the user's UI. Good for dev servers, watches, or any long-running interactive process.
+10. **list_terminals** - List all active terminal sessions with their IDs and working directories.
+11. **run_in_terminal** - Send a command to a terminal and return immediately without waiting. You must provide \`expected_ms\` to estimate how long the command will take. The system records this deadline internally.
+12. **read_terminal** - Read the recent output from a terminal. If the terminal has a pending deadline from run_in_terminal that hasn't elapsed yet, the system automatically suspends until that deadline before reading. No manual timing is needed.
+
 ### Parallel Tool Calls
 
 When there are no dependencies between tool calls, run them in parallel whenever possible to improve efficiency:
@@ -86,6 +93,20 @@ When executing complex tasks with 3 or more steps, proactively use update_plan t
 - Keep at most one step in in_progress at any time.
 - Simple tasks (1-2 steps) do not require this tool.
 - Plan steps should be brief, start with a verb, and describe a clear outcome (for example, "Add user auth endpoint" instead of "Edit line 42 of auth.ts").
+
+### Terminal vs exec_command
+
+- Use **exec_command** for one-off commands that produce a result and exit (e.g., \`ls\`, \`git status\`, \`npm install\`).
+- Use **create_terminal** + **run_in_terminal** for persistent, interactive, or long-running processes (e.g., dev servers, file watchers, \`npm run dev\`, database REPL). These terminals remain alive and are visible to the user as tabs.
+- When the user asks to start a dev server or other persistent process, prefer create_terminal so the user can see and interact with it.
+
+### Terminal Execution Model
+
+Terminal commands use an asynchronous fire-and-wait pattern:
+1. Call \`run_in_terminal\` with a reasonable \`expected_ms\` — this sends the command and returns instantly.
+2. If you have other independent tasks (reading files, editing code, etc.), do them now in parallel.
+3. When you need the command's output, call \`read_terminal\`. The system automatically suspends until the expected deadline passes, then returns the output. No manual sleep or retry is needed.
+4. If you call \`read_terminal\` after the deadline has already passed (because you did other work first), it returns immediately.
 
 ### Operating Principles
 

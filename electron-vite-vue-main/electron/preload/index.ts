@@ -154,6 +154,11 @@ contextBridge.exposeInMainWorld('agentChat', {
     ipcRenderer.on('agent:file-changes', handler)
     return () => { ipcRenderer.off('agent:file-changes', handler) }
   },
+  onTerminalCreated(callback: (data: { requestId: string; terminalId: string; cwd: string }) => void) {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on('agent:terminal-created', handler)
+    return () => { ipcRenderer.off('agent:terminal-created', handler) }
+  },
 })
 
 // --------- Dialog API ---------

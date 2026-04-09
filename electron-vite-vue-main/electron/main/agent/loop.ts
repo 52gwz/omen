@@ -234,6 +234,8 @@ const SAFE_TOOLS = new Set([
   'Read',
   'list_directory',
   'grep_search',
+  'list_terminals',
+  'read_terminal',
 ])
 
 const SAFE_COMMANDS = new Set([
@@ -460,11 +462,20 @@ export async function runAgentLoop(params: AgentRunParams) {
         signal,
         toolCallId: tc.id,
         changeTracker: tracker,
+        sender,
         onOutput: (chunk) => {
           sender.send('agent:tool-output-stream', { requestId, toolCallId: tc.id, chunk })
         },
       }
       const toolResult = await executeTool(tc.function.name, args, cwd, execOptions)
+
+      if (toolResult.meta?.terminalCreated) {
+        sender.send('agent:terminal-created', {
+          requestId,
+          terminalId: toolResult.meta.terminalCreated.id,
+          cwd: toolResult.meta.terminalCreated.cwd,
+        })
+      }
 
       const imageMatch = toolResult.content.match(/^\[image:([^:]+):base64\]\n([\s\S]+)$/)
       if (imageMatch) {

@@ -2,6 +2,14 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import type { FileChangeTracker } from './file-change-tracker'
+import {
+  createSession as tmCreateSession,
+  getSession as tmGetSession,
+  hasSession as tmHasSession,
+  getAllSessionInfo as tmGetAllSessionInfo,
+  writeToSession as tmWriteToSession,
+  readSessionHistory as tmReadSessionHistory,
+} from '../terminal-manager'
 
 export interface ToolDefinition {
   type: 'function'
@@ -12,8 +20,19 @@ export interface ToolDefinition {
   }
 }
 
+export interface ToolResultMeta {
+  terminalCreated?: { id: string; cwd: string }
+}
+
 export interface ToolResult {
   content: string
+  meta?: ToolResultMeta
+}
+
+export interface SenderLike {
+  send(channel: string, data: any): void
+  readonly id: number
+  isDestroyed(): boolean
 }
 
 export interface ToolExecOptions {
@@ -21,6 +40,7 @@ export interface ToolExecOptions {
   onOutput?: (chunk: string) => void
   toolCallId?: string
   changeTracker?: FileChangeTracker
+  sender?: SenderLike
 }
 
 export const toolDefinitions: ToolDefinition[] = [
@@ -153,6 +173,61 @@ export const toolDefinitions: ToolDefinition[] = [
           },
         },
         required: ['plan'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_terminal',
+      description: '创建一个新的持久化终端标签页。终端会在用户界面中显示，并保持活跃状态直到被关闭。适用于需要交互式终端环境的场景，如运行开发服务器、持续监控进程等。',
+      parameters: {
+        type: 'object',
+        properties: {
+          cwd: { type: 'string', description: '终端的工作目录，默认为当前工作目录' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_terminals',
+      description: '列出当前所有活跃的终端会话，返回每个终端的 ID 和工作目录。',
+      parameters: {
+        type: 'object',
+        properties: {},
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_in_terminal',
+      description: '向指定终端发送命令。命令会自动追加换行符执行，工具立即返回，不等待命令完成。你需要通过 expected_ms 告知命令的预期执行时间，之后调用 read_terminal 获取输出时系统会自动等待至预期时间。如果有其他不依赖此命令结果的任务，可以先并行执行，稍后再 read_terminal。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '目标终端的 ID' },
+          command: { type: 'string', description: '要执行的命令' },
+          expected_ms: { type: 'integer', description: '命令预期执行时间（毫秒）。快速命令如 ls 设为 1000，编译类命令设为 10000-30000，启动服务设为 5000。read_terminal 会自动等待到这个时间' },
+        },
+        required: ['id', 'command'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_terminal',
+      description: '读取指定终端的最近输出。如果该终端有 run_in_terminal 设置的预期完成时间且尚未到达，会自动挂起等待至预期时间再读取，无需手动计时。适合检查命令执行结果、长时间运行进程的状态等。',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: '目标终端的 ID' },
+          last_n: { type: 'integer', description: '读取最后 N 个字符，默认 4000' },
+        },
+        required: ['id'],
       },
     },
   },
@@ -560,8 +635,130 @@ async function grepSearch(
   return output
 }
 
+function stripAnsiCodes(text: string): string {
+  return text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\].*?(?:\x07|\x1b\\)/g, '')
+}
+
+function processTerminalOutput(raw: string): string {
+  return stripAnsiCodes(raw).split('\n').map(line => {
+    if (!line.includes('\r')) return line
+    const parts = line.split('\r')
+    let result = ''
+    for (const part of parts) {
+      if (!part) continue
+      if (part.length >= result.length) {
+        result = part
+      } else {
+        result = part + result.slice(part.length)
+      }
+    }
+    return result
+  }).join('\n')
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+const terminalDeadlines = new Map<string, number>()
+
 function text(content: string): ToolResult {
   return { content }
+}
+
+function textWithMeta(content: string, meta: ToolResultMeta): ToolResult {
+  return { content, meta }
+}
+
+function createTerminalTool(
+  cwd: string | undefined,
+  agentCwd: string,
+  sender?: SenderLike,
+): ToolResult {
+  const resolvedCwd = cwd || agentCwd
+  const terminalId = `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+
+  tmCreateSession({
+    id: terminalId,
+    cwd: resolvedCwd,
+    ownerId: sender?.id ?? 0,
+    onData: (chunk) => {
+      if (sender && !sender.isDestroyed()) {
+        sender.send('terminal:data', { id: terminalId, chunk })
+      }
+    },
+    onExit: (exitCode) => {
+      if (sender && !sender.isDestroyed()) {
+        sender.send('terminal:exit', { id: terminalId, exitCode })
+      }
+    },
+  })
+
+  const session = tmGetSession(terminalId)
+  const finalCwd = session?.cwd || resolvedCwd
+
+  return textWithMeta(
+    `终端已创建\nID: ${terminalId}\n工作目录: ${finalCwd}`,
+    { terminalCreated: { id: terminalId, cwd: finalCwd } },
+  )
+}
+
+function listTerminalsTool(): ToolResult {
+  const sessions = tmGetAllSessionInfo()
+  if (sessions.length === 0) {
+    return text('当前没有活跃的终端会话')
+  }
+  const lines = sessions.map(s => `ID: ${s.id}  工作目录: ${s.cwd}`)
+  return text(`活跃终端 (${sessions.length} 个):\n${lines.join('\n')}`)
+}
+
+function runInTerminalTool(
+  id: string,
+  command: string,
+  expectedMs?: number,
+): ToolResult {
+  if (!tmHasSession(id)) {
+    return text(`[error] 终端 ${id} 不存在。请先使用 create_terminal 创建终端，或使用 list_terminals 查看活跃终端。`)
+  }
+
+  tmWriteToSession(id, command + '\n')
+
+  if (expectedMs && expectedMs > 0) {
+    terminalDeadlines.set(id, Date.now() + expectedMs)
+  }
+
+  return text(`命令已发送至终端 ${id}。预期 ${expectedMs || 0}ms 后完成，使用 read_terminal 获取输出。`)
+}
+
+async function readTerminalTool(
+  id: string,
+  lastN?: number,
+  signal?: AbortSignal,
+): Promise<ToolResult> {
+  if (!tmHasSession(id)) {
+    return text(`[error] 终端 ${id} 不存在。请使用 list_terminals 查看活跃终端。`)
+  }
+
+  const deadline = terminalDeadlines.get(id)
+  if (deadline) {
+    const remaining = deadline - Date.now()
+    if (remaining > 0) {
+      await (signal?.aborted
+        ? Promise.resolve()
+        : sleep(Math.min(remaining, 120_000)))
+    }
+    terminalDeadlines.delete(id)
+  }
+
+  const history = tmReadSessionHistory(id, lastN || 4000)
+  if (!history) {
+    return text('(终端暂无输出)')
+  }
+  const processed = processTerminalOutput(history)
+  if (processed.length > MAX_OUTPUT_SIZE) {
+    return text(processed.slice(-MAX_OUTPUT_SIZE) + '\n\n... 输出过长，仅显示最后部分')
+  }
+  return text(processed)
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>, cwd: string, options?: ToolExecOptions): Promise<ToolResult> {
@@ -591,6 +788,23 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
           args.file_glob as string | undefined,
           cwd,
         ))
+
+      case 'create_terminal':
+        return createTerminalTool(args.cwd as string | undefined, cwd, options?.sender)
+      case 'list_terminals':
+        return listTerminalsTool()
+      case 'run_in_terminal':
+        return runInTerminalTool(
+          args.id as string,
+          args.command as string,
+          args.expected_ms as number | undefined,
+        )
+      case 'read_terminal':
+        return await readTerminalTool(
+          args.id as string,
+          args.last_n as number | undefined,
+          options?.signal,
+        )
 
       default:
         return text(`[error] 未知工具: ${name}`)

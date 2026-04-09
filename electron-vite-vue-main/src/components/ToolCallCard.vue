@@ -95,6 +95,10 @@ const toolLabel: Record<string, string> = {
   Delete: '删除文件',
   list_directory: '列出目录',
   grep_search: '搜索内容',
+  create_terminal: '创建终端',
+  list_terminals: '列出终端',
+  run_in_terminal: '终端执行',
+  read_terminal: '读取终端',
 }
 
 const displayName = computed(() => toolLabel[props.name] || props.name)
@@ -109,6 +113,10 @@ const argSummary = computed(() => {
     if (props.name === 'Delete' && obj.path) return obj.path
     if (props.name === 'list_directory') return obj.path || '.'
     if (props.name === 'grep_search' && obj.pattern) return obj.pattern
+    if (props.name === 'create_terminal') return obj.cwd || ''
+    if (props.name === 'run_in_terminal' && obj.command) return obj.command
+    if (props.name === 'read_terminal' && obj.id) return obj.id
+    if (props.name === 'list_terminals') return ''
     const first = Object.values(obj)[0]
     return typeof first === 'string' ? first : JSON.stringify(first)
   } catch {

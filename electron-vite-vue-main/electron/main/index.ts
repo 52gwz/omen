@@ -8,19 +8,16 @@ import Store from 'electron-store'
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const pty = require('node-pty') as typeof import('node-pty')
 
-function ensureNodePtyHelperExecutable() {
-  try {
-    const pkgPath = require.resolve('node-pty/package.json')
-    const pkgDir = path.dirname(pkgPath)
-    const unpackedPkgDir = pkgDir.replace('app.asar', 'app.asar.unpacked').replace('node_modules.asar', 'node_modules.asar.unpacked')
-    const helperPath = path.join(unpackedPkgDir, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
-    if (fs.existsSync(helperPath)) {
-      fs.chmodSync(helperPath, 0o755)
-    }
-  } catch {}
-}
+import {
+  ensureNodePtyHelperExecutable,
+  createSession as tmCreateSession,
+  getSession as tmGetSession,
+  killSession as tmKillSession,
+  killAllSessions as tmKillAllSessions,
+  cleanupSessionsForOwner as tmCleanupForOwner,
+  resolveTerminalCwd,
+} from './terminal-manager'
 
 ensureNodePtyHelperExecutable()
 
@@ -192,63 +189,6 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
-type PtySession = {
-  ptyProcess: import('node-pty').IPty
-  ownerId: number
-  cwd: string
-  history: string
-}
-
-const terminalSessions = new Map<string, PtySession>()
-
-function resolveShell() {
-  if (process.platform === 'win32') {
-    return process.env.COMSPEC || 'powershell.exe'
-  }
-  return process.env.SHELL || '/bin/zsh'
-}
-
-function resolveTerminalCwd(cwd?: string) {
-  if (!cwd) return app.getPath('home')
-  try {
-    if (fs.statSync(cwd).isDirectory()) return cwd
-  } catch {}
-  return app.getPath('home')
-}
-
-function resolveUtf8Locale() {
-  const candidates = [
-    process.env.LC_ALL,
-    process.env.LC_CTYPE,
-    process.env.LANG,
-  ].filter((value): value is string => Boolean(value && /utf-?8/i.test(value)))
-
-  return candidates[0] || 'en_US.UTF-8'
-}
-
-function killTerminalSession(id: string) {
-  const session = terminalSessions.get(id)
-  if (!session) return
-  try {
-    session.ptyProcess.kill()
-  } catch {}
-  terminalSessions.delete(id)
-}
-
-function cleanupTerminalSessionsForOwner(ownerId: number) {
-  for (const [id, session] of terminalSessions.entries()) {
-    if (session.ownerId === ownerId) {
-      killTerminalSession(id)
-    }
-  }
-}
-
-function appendTerminalHistory(session: PtySession, chunk: string) {
-  session.history += chunk
-  if (session.history.length > 200000) {
-    session.history = session.history.slice(-100000)
-  }
-}
 
 
 async function createWindow() {
@@ -298,9 +238,7 @@ async function createWindow() {
 app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
-  for (const id of [...terminalSessions.keys()]) {
-    killTerminalSession(id)
-  }
+  tmKillAllSessions()
   win = null
   if (process.platform !== 'darwin') app.quit()
 })
@@ -794,58 +732,43 @@ ipcMain.handle('workspace:load', () => {
 })
 
 ipcMain.handle('terminal:start', async (event, payload: { id: string; cwd?: string; cols?: number; rows?: number }) => {
-  const existing = terminalSessions.get(payload.id)
+  const existing = tmGetSession(payload.id)
   if (existing) {
     return { id: payload.id, cwd: existing.cwd, history: existing.history }
   }
 
-  const cwd = resolveTerminalCwd(payload.cwd)
-  const ownerId = event.sender.id
   const ownerWebContents = event.sender
-  const utf8Locale = resolveUtf8Locale()
-  const ptyProcess = pty.spawn(resolveShell(), [], {
-    name: 'xterm-256color',
-    cols: Math.max(20, payload.cols || 80),
-    rows: Math.max(5, payload.rows || 24),
-    cwd,
-    env: {
-      ...process.env,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      LANG: process.env.LANG || utf8Locale,
-      LC_ALL: process.env.LC_ALL || utf8Locale,
-      LC_CTYPE: process.env.LC_CTYPE || utf8Locale,
+  const ownerId = ownerWebContents.id
+
+  const session = tmCreateSession({
+    id: payload.id,
+    cwd: payload.cwd,
+    ownerId,
+    cols: payload.cols,
+    rows: payload.rows,
+    onData: (chunk) => {
+      if (!ownerWebContents.isDestroyed()) {
+        ownerWebContents.send('terminal:data', { id: payload.id, chunk })
+      }
+    },
+    onExit: (exitCode) => {
+      if (!ownerWebContents.isDestroyed()) {
+        ownerWebContents.send('terminal:exit', { id: payload.id, exitCode })
+      }
     },
   })
 
-  const session: PtySession = { ptyProcess, ownerId, cwd, history: '' }
-  terminalSessions.set(payload.id, session)
+  ownerWebContents.once('destroyed', () => tmCleanupForOwner(ownerId))
 
-  ptyProcess.onData((chunk: string) => {
-    appendTerminalHistory(session, chunk)
-    if (!ownerWebContents.isDestroyed()) {
-      ownerWebContents.send('terminal:data', { id: payload.id, chunk })
-    }
-  })
-
-  ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-    terminalSessions.delete(payload.id)
-    if (!ownerWebContents.isDestroyed()) {
-      ownerWebContents.send('terminal:exit', { id: payload.id, exitCode })
-    }
-  })
-
-  ownerWebContents.once('destroyed', () => cleanupTerminalSessionsForOwner(ownerId))
-
-  return { id: payload.id, cwd, history: session.history }
+  return { id: payload.id, cwd: session.cwd, history: session.history }
 })
 
 ipcMain.handle('terminal:write', async (_event, payload: { id: string; data: string }) => {
-  terminalSessions.get(payload.id)?.ptyProcess.write(payload.data)
+  tmGetSession(payload.id)?.ptyProcess.write(payload.data)
 })
 
 ipcMain.handle('terminal:resize', async (_event, payload: { id: string; cols: number; rows: number }) => {
-  const session = terminalSessions.get(payload.id)
+  const session = tmGetSession(payload.id)
   if (!session) return
   session.ptyProcess.resize(
     Math.max(20, Math.floor(payload.cols || 80)),
@@ -854,7 +777,7 @@ ipcMain.handle('terminal:resize', async (_event, payload: { id: string; cols: nu
 })
 
 ipcMain.handle('terminal:kill', async (_event, payload: { id: string }) => {
-  killTerminalSession(payload.id)
+  tmKillSession(payload.id)
 })
 
 ipcMain.handle('window-monitor:list', async (_event, query?: string) => {
