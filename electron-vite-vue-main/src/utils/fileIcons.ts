@@ -58,23 +58,25 @@ const extMap: Record<string, string> = {
   'gz': 'zip',
 }
 
+const iconBase = `${import.meta.env.BASE_URL}icons/`
+
 // 获取文件图标路径
 export function getFileIcon(fileName: string, isDirectory = false, isExpanded = false): string {
   if (isDirectory) {
-    return `/icons/default_folder${isExpanded ? '_opened' : ''}.svg`
+    return `${iconBase}default_folder${isExpanded ? '_opened' : ''}.svg`
   }
   
   // 先匹配特殊文件名
   if (specialFileMap[fileName]) {
-    return `/icons/file_type_${specialFileMap[fileName]}.svg`
+    return `${iconBase}file_type_${specialFileMap[fileName]}.svg`
   }
   
   // 匹配扩展名
   const ext = fileName.split('.').pop()?.toLowerCase() || ''
   if (ext && extMap[ext]) {
-    return `/icons/file_type_${extMap[ext]}.svg`
+    return `${iconBase}file_type_${extMap[ext]}.svg`
   }
   
   // 默认文件图标
-  return '/icons/default_file.svg'
+  return `${iconBase}default_file.svg`
 }

@@ -224,6 +224,26 @@ function killProcessGroup(child: ChildProcess) {
   }, 2000)
 }
 
+function buildCommandEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  const defaultPathEntries = process.platform === 'darwin'
+    ? ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
+    : ['/usr/local/bin', '/usr/bin', '/bin']
+  const currentPathEntries = (env.PATH || '').split(path.delimiter).filter(Boolean)
+  env.PATH = [...new Set([...defaultPathEntries, ...currentPathEntries])].join(path.delimiter)
+  return env
+}
+
+function resolveShellAndArgs(command: string): { shell: string; args: string[] } {
+  if (process.platform === 'win32') {
+    const shell = process.env.COMSPEC || 'powershell.exe'
+    return { shell, args: ['-NoLogo', '-NoProfile', '-Command', command] }
+  }
+  const shell = process.env.SHELL || '/bin/zsh'
+  // interactive + login: packaged app launched from Finder can still load user shell initialization.
+  return { shell, args: ['-i', '-l', '-c', command] }
+}
+
 async function execCommand(
   command: string,
   cwd: string,
@@ -242,13 +262,14 @@ async function execCommand(
     return '[stopped] 操作已取消'
   }
 
-  const shell = process.env.SHELL || '/bin/zsh'
+  const { shell, args } = resolveShellAndArgs(command)
+  const env = buildCommandEnv()
 
   return new Promise((resolve) => {
-    const child = spawn(shell, ['-l', '-c', command], {
+    const child = spawn(shell, args, {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      env,
       detached: true,
     })
 
