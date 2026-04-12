@@ -305,7 +305,7 @@ function buildCommandEnv(): NodeJS.ProcessEnv {
     ? ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
     : ['/usr/local/bin', '/usr/bin', '/bin']
   const currentPathEntries = (env.PATH || '').split(path.delimiter).filter(Boolean)
-  env.PATH = [...new Set([...defaultPathEntries, ...currentPathEntries])].join(path.delimiter)
+  env.PATH = Array.from(new Set([...defaultPathEntries, ...currentPathEntries])).join(path.delimiter)
   return env
 }
 

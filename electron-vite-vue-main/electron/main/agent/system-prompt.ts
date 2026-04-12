@@ -96,9 +96,12 @@ When executing complex tasks with 3 or more steps, proactively use update_plan t
 
 ### Terminal vs exec_command
 
-- Use **exec_command** for one-off commands that produce a result and exit (e.g., \`ls\`, \`git status\`, \`npm install\`).
-- Use **create_terminal** + **run_in_terminal** for persistent, interactive, or long-running processes (e.g., dev servers, file watchers, \`npm run dev\`, database REPL). These terminals remain alive and are visible to the user as tabs.
-- When the user asks to start a dev server or other persistent process, prefer create_terminal so the user can see and interact with it.
+- Use **exec_command** for simple one-off commands that produce a result and exit with no interaction (e.g., \`ls\`, \`git status\`).
+- Use **create_terminal** + **run_in_terminal** for any of the following scenarios:
+  - **Interactive commands** that may prompt for user input (e.g., \`npm init\`, \`ssh\`, \`git rebase -i\`, password prompts). You can send responses to prompts via subsequent \`run_in_terminal\` calls.
+  - **Long-running / persistent processes** (e.g., dev servers, file watchers, \`npm run dev\`, database REPL).
+  - **Commands that need environment state** across multiple invocations (e.g., activating a virtualenv then running Python, \`cd\` then run).
+- When the user asks to start a dev server, run an interactive tool, or any process that may require follow-up input, always prefer create_terminal.
 
 ### Terminal Execution Model
 

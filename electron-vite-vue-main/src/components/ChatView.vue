@@ -27,7 +27,7 @@ function renderMarkdown(raw: string): string {
 }
 
 function renderReasoning(raw: string): string {
-  return raw
+  return raw.trim()
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -606,6 +606,11 @@ function sendAgentMessage(text: string) {
     if (rid !== requestId) return
     const msg = getLastAssistant()
     if (msg) {
+      for (const m of messages) {
+        if (m !== msg && m.role === 'assistant' && m.agentRequestId === requestId && m.planSteps?.length) {
+          m.planSteps = undefined
+        }
+      }
       msg.planSteps = plan.map(p => ({ step: p.step, status: p.status as PlanStep['status'] }))
       scrollToBottom()
     }
