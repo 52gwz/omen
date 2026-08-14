@@ -8,15 +8,11 @@ Omen 是一款面向开发者的 **AI 桌面智能助手**，将对话、代码�
 
 ## 预览
 
-| 首页欢迎 | 多面板工作区 |
-|:---:|:---:|
-| <img src="previewimg/1.png" alt="欢迎使用 Omen 桌面智能体" width="380" /> | <img src="previewimg/2.png" alt="文件、技能与终端面板" width="380" /> |
-
 | Agent 驱动开发 | 内置代码编辑器 |
 |:---:|:---:|
 | <img src="previewimg/3.png" alt="Agent 初始化 Vue 项目" width="380" /> | <img src="previewimg/4.png" alt="Monaco 编辑器编写贪吃蛇" width="380" /> |
 
-| 浏览器实时预览 | Agent 自主编码 |
+| 浏览器实时预览 | 对话/代码撤销操作 |
 |:---:|:---:|
 | <img src="previewimg/5.png" alt="内置浏览器预览游戏" width="380" /> | <img src="previewimg/6.png" alt="Agent 创建项目文件" width="380" /> |
 
